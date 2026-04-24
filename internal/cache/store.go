@@ -40,6 +40,7 @@ type NodeSnapshot struct {
 	Protocol       string
 	Server         string
 	Port           int
+	RawConfigJSON  string
 	GroupIDs       []int64
 }
 
@@ -228,7 +229,7 @@ ORDER BY id ASC
 
 func loadNodes(ctx context.Context, db *sql.DB, store *Store) error {
 	rows, err := db.QueryContext(ctx, `
-SELECT id, subscription_id, name, protocol, server, port
+SELECT id, subscription_id, name, protocol, server, port, raw_config_json
 FROM proxy_nodes
 WHERE enabled = 1 AND adapter_status = 'supported' AND alive_status != 'dead'
 ORDER BY id ASC
@@ -240,7 +241,7 @@ ORDER BY id ASC
 
 	for rows.Next() {
 		var node NodeSnapshot
-		if err := rows.Scan(&node.ID, &node.SubscriptionID, &node.Name, &node.Protocol, &node.Server, &node.Port); err != nil {
+		if err := rows.Scan(&node.ID, &node.SubscriptionID, &node.Name, &node.Protocol, &node.Server, &node.Port, &node.RawConfigJSON); err != nil {
 			return fmt.Errorf("scan node cache: %w", err)
 		}
 		store.nodesByID[node.ID] = node

@@ -1,0 +1,275 @@
+package proxy
+
+import (
+	"bufio"
+	"context"
+	"encoding/base64"
+	"encoding/binary"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/jnmproxy/jnmproxy/internal/auth"
+	"github.com/jnmproxy/jnmproxy/internal/cache"
+	"github.com/jnmproxy/jnmproxy/internal/db"
+	"github.com/jnmproxy/jnmproxy/internal/outbound"
+	"github.com/jnmproxy/jnmproxy/internal/repository"
+)
+
+func TestHTTPProxyGETThroughHTTPOutbound(t *testing.T) {
+	ctx := context.Background()
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("ok:" + r.URL.Path))
+	}))
+	defer target.Close()
+
+	upstream := newHTTPConnectProxy(t)
+	defer upstream.Close()
+
+	runtimeCache := testRuntimeCache(t, ctx, upstream.URL)
+	proxyServer := httptest.NewServer(NewHTTPProxy(runtimeCache, outbound.NewDialer(2*time.Second)))
+	defer proxyServer.Close()
+
+	proxyURL, err := url.Parse(proxyServer.URL)
+	if err != nil {
+		t.Fatalf("parse proxy url: %v", err)
+	}
+	client := &http.Client{
+		Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL)},
+		Timeout:   5 * time.Second,
+	}
+	req, err := http.NewRequest(http.MethodGet, target.URL+"/hello", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Proxy-Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("user:pass")))
+
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("proxy request: %v", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK || string(body) != "ok:/hello" {
+		t.Fatalf("unexpected response status=%d body=%q", resp.StatusCode, string(body))
+	}
+}
+
+func TestSOCKS5ProxyThroughHTTPOutbound(t *testing.T) {
+	ctx := context.Background()
+	echoListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen echo: %v", err)
+	}
+	defer echoListener.Close()
+	go func() {
+		conn, err := echoListener.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		_, _ = io.Copy(conn, conn)
+	}()
+
+	upstream := newHTTPConnectProxy(t)
+	defer upstream.Close()
+	runtimeCache := testRuntimeCache(t, ctx, upstream.URL)
+
+	socksListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen socks: %v", err)
+	}
+	defer socksListener.Close()
+	go func() {
+		_ = NewSOCKS5Server(runtimeCache, outbound.NewDialer(2*time.Second)).Serve(socksListener)
+	}()
+
+	conn, err := net.Dial("tcp", socksListener.Addr().String())
+	if err != nil {
+		t.Fatalf("dial socks: %v", err)
+	}
+	defer conn.Close()
+	if err := socks5Connect(conn, "user", "pass", echoListener.Addr().String()); err != nil {
+		t.Fatalf("socks connect: %v", err)
+	}
+
+	if _, err := conn.Write([]byte("ping")); err != nil {
+		t.Fatalf("write ping: %v", err)
+	}
+	reply := make([]byte, 4)
+	if _, err := io.ReadFull(conn, reply); err != nil {
+		t.Fatalf("read ping: %v", err)
+	}
+	if string(reply) != "ping" {
+		t.Fatalf("unexpected echo reply: %q", string(reply))
+	}
+}
+
+func newHTTPConnectProxy(t *testing.T) *httptest.Server {
+	t.Helper()
+
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodConnect {
+			http.Error(w, "connect required", http.StatusMethodNotAllowed)
+			return
+		}
+		targetConn, err := net.Dial("tcp", r.Host)
+		if err != nil {
+			http.Error(w, "dial target failed", http.StatusBadGateway)
+			return
+		}
+		hijacker, ok := w.(http.Hijacker)
+		if !ok {
+			_ = targetConn.Close()
+			http.Error(w, "hijack unsupported", http.StatusInternalServerError)
+			return
+		}
+		clientConn, _, err := hijacker.Hijack()
+		if err != nil {
+			_ = targetConn.Close()
+			return
+		}
+		if _, err := io.WriteString(clientConn, "HTTP/1.1 200 Connection Established\r\n\r\n"); err != nil {
+			_ = clientConn.Close()
+			_ = targetConn.Close()
+			return
+		}
+		pipeConnections(clientConn, targetConn)
+	}))
+}
+
+func testRuntimeCache(t *testing.T, ctx context.Context, upstreamURL string) *cache.Store {
+	t.Helper()
+
+	storeDB, err := db.Open(ctx, filepath.Join(t.TempDir(), "jnmproxy.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { _ = storeDB.Close() })
+	if err := db.Migrate(ctx, storeDB); err != nil {
+		t.Fatalf("migrate db: %v", err)
+	}
+
+	upstreamParsed, err := url.Parse(upstreamURL)
+	if err != nil {
+		t.Fatalf("parse upstream url: %v", err)
+	}
+	host, portText, err := net.SplitHostPort(upstreamParsed.Host)
+	if err != nil {
+		t.Fatalf("split upstream host: %v", err)
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil {
+		t.Fatalf("parse upstream port: %v", err)
+	}
+
+	subRepo := repository.NewSubscriptionRepository(storeDB)
+	subscription, err := subRepo.Create(ctx, repository.CreateSubscriptionParams{Name: "sub", URL: "https://example.com/sub", Enabled: true})
+	if err != nil {
+		t.Fatalf("create subscription: %v", err)
+	}
+	if err := subRepo.UpsertNodes(ctx, []repository.UpsertProxyNodeParams{
+		{
+			SubscriptionID:      subscription.ID,
+			SubscriptionNodeKey: "http-upstream",
+			Name:                "HTTP upstream",
+			Protocol:            "http",
+			Server:              host,
+			Port:                port,
+			RawConfigJSON:       "{}",
+			AdapterStatus:       "supported",
+		},
+	}); err != nil {
+		t.Fatalf("upsert node: %v", err)
+	}
+
+	authService := auth.NewService(repository.NewCredentialRepository(storeDB))
+	if _, err := authService.CreateCredential(ctx, auth.CreateCredentialInput{
+		Username:        "user",
+		Password:        "pass",
+		Enabled:         true,
+		BindMode:        "all",
+		SelectionPolicy: "fixed",
+	}); err != nil {
+		t.Fatalf("create credential: %v", err)
+	}
+
+	runtimeCache := cache.NewStore()
+	if err := runtimeCache.Load(ctx, storeDB); err != nil {
+		t.Fatalf("load cache: %v", err)
+	}
+	return runtimeCache
+}
+
+func socks5Connect(conn net.Conn, username string, password string, target string) error {
+	reader := bufio.NewReader(conn)
+	if _, err := conn.Write([]byte{0x05, 0x01, 0x02}); err != nil {
+		return err
+	}
+	method := []byte{0, 0}
+	if _, err := io.ReadFull(reader, method); err != nil {
+		return err
+	}
+	if method[1] != 0x02 {
+		return fmt.Errorf("unexpected socks method %d", method[1])
+	}
+
+	authRequest := []byte{0x01, byte(len(username))}
+	authRequest = append(authRequest, []byte(username)...)
+	authRequest = append(authRequest, byte(len(password)))
+	authRequest = append(authRequest, []byte(password)...)
+	if _, err := conn.Write(authRequest); err != nil {
+		return err
+	}
+	authResponse := []byte{0, 0}
+	if _, err := io.ReadFull(reader, authResponse); err != nil {
+		return err
+	}
+	if authResponse[1] != 0x00 {
+		return fmt.Errorf("socks auth failed with status %d", authResponse[1])
+	}
+
+	host, portText, err := net.SplitHostPort(target)
+	if err != nil {
+		return err
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil {
+		return err
+	}
+	request := []byte{0x05, 0x01, 0x00}
+	if ip := net.ParseIP(host).To4(); ip != nil {
+		request = append(request, 0x01)
+		request = append(request, ip...)
+	} else {
+		host = strings.Trim(host, "[]")
+		request = append(request, 0x03, byte(len(host)))
+		request = append(request, []byte(host)...)
+	}
+	portBytes := make([]byte, 2)
+	binary.BigEndian.PutUint16(portBytes, uint16(port))
+	request = append(request, portBytes...)
+	if _, err := conn.Write(request); err != nil {
+		return err
+	}
+
+	reply := make([]byte, 10)
+	if _, err := io.ReadFull(reader, reply); err != nil {
+		return err
+	}
+	if reply[1] != 0x00 {
+		return fmt.Errorf("socks connect failed with status %d", reply[1])
+	}
+	return nil
+}
