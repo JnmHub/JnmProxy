@@ -50,6 +50,7 @@ func (proxy *HTTPProxy) handleConnect(w http.ResponseWriter, r *http.Request, se
 	targetAddress := ensurePort(r.Host, "443")
 	outConn, err := proxy.Dialer.DialContext(r.Context(), selection.Node, targetAddress)
 	if err != nil {
+		proxy.Cache.ReportNodeFailure(selection.Node.ID)
 		recordStats(proxy.Stats, selection, 0, 0, false)
 		http.Error(w, "connect upstream failed", http.StatusBadGateway)
 		return
@@ -58,6 +59,7 @@ func (proxy *HTTPProxy) handleConnect(w http.ResponseWriter, r *http.Request, se
 	hijacker, ok := w.(http.Hijacker)
 	if !ok {
 		_ = outConn.Close()
+		proxy.Cache.ReportNodeFailure(selection.Node.ID)
 		recordStats(proxy.Stats, selection, 0, 0, false)
 		http.Error(w, "hijacking not supported", http.StatusInternalServerError)
 		return
@@ -65,16 +67,19 @@ func (proxy *HTTPProxy) handleConnect(w http.ResponseWriter, r *http.Request, se
 	clientConn, _, err := hijacker.Hijack()
 	if err != nil {
 		_ = outConn.Close()
+		proxy.Cache.ReportNodeFailure(selection.Node.ID)
 		recordStats(proxy.Stats, selection, 0, 0, false)
 		return
 	}
 	if _, err := io.WriteString(clientConn, "HTTP/1.1 200 Connection Established\r\n\r\n"); err != nil {
 		_ = clientConn.Close()
 		_ = outConn.Close()
+		proxy.Cache.ReportNodeFailure(selection.Node.ID)
 		recordStats(proxy.Stats, selection, 0, 0, false)
 		return
 	}
 	uploadBytes, downloadBytes := pipeConnections(clientConn, outConn)
+	proxy.Cache.ReportNodeSuccess(selection.Node.ID)
 	recordStats(proxy.Stats, selection, uploadBytes, downloadBytes, true)
 }
 
@@ -82,6 +87,7 @@ func (proxy *HTTPProxy) handleHTTP(w http.ResponseWriter, r *http.Request, selec
 	targetAddress := httpTargetAddress(r)
 	outConn, err := proxy.Dialer.DialContext(r.Context(), selection.Node, targetAddress)
 	if err != nil {
+		proxy.Cache.ReportNodeFailure(selection.Node.ID)
 		recordStats(proxy.Stats, selection, 0, 0, false)
 		http.Error(w, "connect upstream failed", http.StatusBadGateway)
 		return
@@ -97,6 +103,7 @@ func (proxy *HTTPProxy) handleHTTP(w http.ResponseWriter, r *http.Request, selec
 	outReq.Header.Del("Proxy-Connection")
 
 	if err := outReq.Write(outConn); err != nil {
+		proxy.Cache.ReportNodeFailure(selection.Node.ID)
 		recordStats(proxy.Stats, selection, requestUploadBytes(r), 0, false)
 		http.Error(w, "write upstream request failed", http.StatusBadGateway)
 		return
@@ -104,6 +111,7 @@ func (proxy *HTTPProxy) handleHTTP(w http.ResponseWriter, r *http.Request, selec
 
 	resp, err := http.ReadResponse(bufio.NewReader(outConn), outReq)
 	if err != nil {
+		proxy.Cache.ReportNodeFailure(selection.Node.ID)
 		recordStats(proxy.Stats, selection, requestUploadBytes(r), 0, false)
 		http.Error(w, "read upstream response failed", http.StatusBadGateway)
 		return
@@ -113,6 +121,7 @@ func (proxy *HTTPProxy) handleHTTP(w http.ResponseWriter, r *http.Request, selec
 	copyHeader(w.Header(), resp.Header)
 	w.WriteHeader(resp.StatusCode)
 	downloadBytes, _ := io.Copy(w, resp.Body)
+	proxy.Cache.ReportNodeSuccess(selection.Node.ID)
 	recordStats(proxy.Stats, selection, requestUploadBytes(r), downloadBytes, resp.StatusCode < 500)
 }
 

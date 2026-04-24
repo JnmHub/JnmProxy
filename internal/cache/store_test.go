@@ -127,4 +127,22 @@ func TestStoreSelectsNodesByCredentialBinding(t *testing.T) {
 	if node.ID != nodes[0].ID {
 		t.Fatalf("node credential should select bound node, got %d", node.ID)
 	}
+
+	cacheStore.failureThreshold = 1
+	cacheStore.ReportNodeFailure(nodes[0].ID)
+	allNodeAfterFailure, err := cacheStore.SelectNode("all-user")
+	if err != nil {
+		t.Fatalf("select all after circuit break: %v", err)
+	}
+	if allNodeAfterFailure.ID != nodes[1].ID {
+		t.Fatalf("circuit breaker should skip failed first node, got %d", allNodeAfterFailure.ID)
+	}
+	cacheStore.ReportNodeSuccess(nodes[0].ID)
+	allNodeAfterSuccess, err := cacheStore.SelectNode("all-user")
+	if err != nil {
+		t.Fatalf("select all after success: %v", err)
+	}
+	if allNodeAfterSuccess.ID != nodes[0].ID {
+		t.Fatalf("success should reset circuit breaker, got %d", allNodeAfterSuccess.ID)
+	}
 }

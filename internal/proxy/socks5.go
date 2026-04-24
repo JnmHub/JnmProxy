@@ -70,6 +70,7 @@ func (server *SOCKS5Server) handleConn(conn net.Conn) {
 	defer cancel()
 	outConn, err := server.Dialer.DialContext(ctx, selection.Node, targetAddress)
 	if err != nil {
+		server.Cache.ReportNodeFailure(selection.Node.ID)
 		recordStats(server.Stats, selection, 0, 0, false)
 		_ = writeSOCKS5Reply(conn, 0x05)
 		return
@@ -78,10 +79,12 @@ func (server *SOCKS5Server) handleConn(conn net.Conn) {
 
 	_ = conn.SetDeadline(time.Time{})
 	if err := writeSOCKS5Reply(conn, 0x00); err != nil {
+		server.Cache.ReportNodeFailure(selection.Node.ID)
 		recordStats(server.Stats, selection, 0, 0, false)
 		return
 	}
 	uploadBytes, downloadBytes := pipeConnections(conn, outConn)
+	server.Cache.ReportNodeSuccess(selection.Node.ID)
 	recordStats(server.Stats, selection, uploadBytes, downloadBytes, true)
 }
 

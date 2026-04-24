@@ -57,6 +57,14 @@ type Store struct {
 	groupNodeIDs          map[int64][]int64
 	allNodeIDs            []int64
 	random                *rand.Rand
+	nodeFailures          map[int64]nodeFailureState
+	failureThreshold      int
+	circuitBreakDuration  time.Duration
+}
+
+type nodeFailureState struct {
+	Count        int
+	CircuitUntil time.Time
 }
 
 func NewStore() *Store {
@@ -65,6 +73,9 @@ func NewStore() *Store {
 		nodesByID:             make(map[int64]NodeSnapshot),
 		groupNodeIDs:          make(map[int64][]int64),
 		random:                rand.New(rand.NewSource(time.Now().UnixNano())),
+		nodeFailures:          make(map[int64]nodeFailureState),
+		failureThreshold:      3,
+		circuitBreakDuration:  time.Minute,
 	}
 }
 
@@ -82,6 +93,15 @@ func (store *Store) Load(ctx context.Context, db *sql.DB) error {
 	store.allNodeIDs = loaded.allNodeIDs
 	if store.random == nil {
 		store.random = rand.New(rand.NewSource(time.Now().UnixNano()))
+	}
+	if store.nodeFailures == nil {
+		store.nodeFailures = make(map[int64]nodeFailureState)
+	}
+	if store.failureThreshold <= 0 {
+		store.failureThreshold = 3
+	}
+	if store.circuitBreakDuration <= 0 {
+		store.circuitBreakDuration = time.Minute
 	}
 	return nil
 }
@@ -130,10 +150,28 @@ func (store *Store) Select(username string) (Selection, error) {
 	}, nil
 }
 
+func (store *Store) ReportNodeFailure(nodeID int64) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+
+	state := store.nodeFailures[nodeID]
+	state.Count++
+	if state.Count >= store.failureThreshold {
+		state.CircuitUntil = time.Now().Add(store.circuitBreakDuration)
+	}
+	store.nodeFailures[nodeID] = state
+}
+
+func (store *Store) ReportNodeSuccess(nodeID int64) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	delete(store.nodeFailures, nodeID)
+}
+
 func (store *Store) candidateIDsLocked(credential CredentialSnapshot) []int64 {
 	switch credential.BindMode {
 	case model.CredentialBindModeAll:
-		return append([]int64(nil), store.allNodeIDs...)
+		return store.filterAvailableLocked(store.allNodeIDs)
 	case model.CredentialBindModeGroup:
 		seen := make(map[int64]struct{})
 		var candidates []int64
@@ -149,6 +187,7 @@ func (store *Store) candidateIDsLocked(credential CredentialSnapshot) []int64 {
 				candidates = append(candidates, nodeID)
 			}
 		}
+		candidates = store.filterAvailableLocked(candidates)
 		sort.Slice(candidates, func(i, j int) bool { return candidates[i] < candidates[j] })
 		return candidates
 	case model.CredentialBindModeNode:
@@ -161,11 +200,28 @@ func (store *Store) candidateIDsLocked(credential CredentialSnapshot) []int64 {
 				candidates = append(candidates, binding.TargetID)
 			}
 		}
+		candidates = store.filterAvailableLocked(candidates)
 		sort.Slice(candidates, func(i, j int) bool { return candidates[i] < candidates[j] })
 		return candidates
 	default:
 		return nil
 	}
+}
+
+func (store *Store) filterAvailableLocked(nodeIDs []int64) []int64 {
+	now := time.Now()
+	candidates := make([]int64, 0, len(nodeIDs))
+	for _, nodeID := range nodeIDs {
+		state, failed := store.nodeFailures[nodeID]
+		if failed && !state.CircuitUntil.IsZero() {
+			if now.Before(state.CircuitUntil) {
+				continue
+			}
+			delete(store.nodeFailures, nodeID)
+		}
+		candidates = append(candidates, nodeID)
+	}
+	return candidates
 }
 
 func (store *Store) selectedGroupIDLocked(credential CredentialSnapshot, nodeID int64) int64 {
