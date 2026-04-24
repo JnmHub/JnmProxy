@@ -1,0 +1,53 @@
+package model
+
+type Subscription struct {
+	ID                     int64              `json:"id"`
+	Name                   string             `json:"name"`
+	URL                    string             `json:"url"`
+	UserAgent              string             `json:"user_agent"`
+	RefreshIntervalSeconds int                `json:"refresh_interval_seconds"`
+	Enabled                bool               `json:"enabled"`
+	LastRefreshAt          string             `json:"last_refresh_at,omitempty"`
+	NextRefreshAt          string             `json:"next_refresh_at,omitempty"`
+	LastStatus             SubscriptionStatus `json:"last_status"`
+	LastError              string             `json:"last_error,omitempty"`
+	UploadBytes            *int64             `json:"upload_bytes,omitempty"`
+	DownloadBytes          *int64             `json:"download_bytes,omitempty"`
+	TotalBytes             *int64             `json:"total_bytes,omitempty"`
+	ExpireAt               string             `json:"expire_at,omitempty"`
+	CreatedAt              string             `json:"created_at"`
+	UpdatedAt              string             `json:"updated_at"`
+}
+
+type ProxyNode struct {
+	ID                  int64         `json:"id"`
+	SubscriptionID      int64         `json:"subscription_id"`
+	SubscriptionNodeKey string        `json:"subscription_node_key"`
+	Name                string        `json:"name"`
+	Protocol            string        `json:"protocol"`
+	Server              string        `json:"server"`
+	Port                int           `json:"port"`
+	RawURI              string        `json:"raw_uri,omitempty"`
+	RawConfigJSON       string        `json:"raw_config_json"`
+	AdapterStatus       AdapterStatus `json:"adapter_status"`
+	Enabled             bool          `json:"enabled"`
+	AliveStatus         AliveStatus   `json:"alive_status"`
+	LastSeenAt          string        `json:"last_seen_at,omitempty"`
+	LastCheckedAt       string        `json:"last_checked_at,omitempty"`
+	LatencyMS           *int64        `json:"latency_ms,omitempty"`
+	FailCount           int           `json:"fail_count"`
+	CreatedAt           string        `json:"created_at"`
+	UpdatedAt           string        `json:"updated_at"`
+}
+
+type SubscriptionRefreshLog struct {
+	ID             int64  `json:"id"`
+	SubscriptionID int64  `json:"subscription_id"`
+	Status         string `json:"status"`
+	HTTPStatus     *int64 `json:"http_status,omitempty"`
+	NodeCount      int    `json:"node_count"`
+	Error          string `json:"error,omitempty"`
+	StartedAt      string `json:"started_at"`
+	FinishedAt     string `json:"finished_at,omitempty"`
+	CreatedAt      string `json:"created_at"`
+}
