@@ -1,0 +1,20 @@
+server:
+  api_addr: "127.0.0.1:8080"
+
+proxy:
+  http_addr: "127.0.0.1:1081"
+  socks_addr: "127.0.0.1:1080"
+
+database:
+  path: "./data/jnmproxy.db"
+
+subscription:
+  default_user_agent: "clash/1.18.0"
+  default_refresh_interval_seconds: 3600
+  request_timeout_seconds: 20
+
+stats:
+  flush_interval_seconds: 10
+
+security:
+  redact_logs: true
