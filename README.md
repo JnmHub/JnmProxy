@@ -1,0 +1,81 @@
+# JnmProxy
+
+JnmProxy 是一个 Go 后端代理池系统，基于机场订阅链接维护代理节点，提供 HTTP/SOCKS5 入站代理、凭证认证、分组调度、订阅刷新和流量统计。
+
+当前阶段只实现后端，不包含前端。
+
+## 功能状态
+
+- SQLite 本地数据库，启动自动迁移。
+- 多订阅管理，刷新订阅时使用 `User-Agent: clash/1.18.0`。
+- 支持 Clash YAML、Base64 URI、逐行 URI 订阅解析。
+- 所有节点统一入库，并保留订阅来源标识。
+- 支持手动分组、批量分组、关键词自动分组。
+- 支持多个代理访问凭证，凭证可绑定全部节点、分组或单个节点。
+- HTTP 和 SOCKS5 入站代理强制用户名密码认证。
+- 当前出站适配已支持 HTTP、HTTPS、SOCKS5 上游代理。
+- 流量统计先写内存，再定时批量写入 SQLite。
+- 定时刷新订阅和节点健康检查已接入。
+- 提供 `/api/v1` 后端管理 API。
+
+## 本地启动
+
+如果系统没有 `go` 命令，需要先安装 Go 1.22+。
+
+```bash
+go test ./...
+go run ./cmd/jnmproxy -migrate-only
+go run ./cmd/jnmproxy
+```
+
+默认监听：
+
+- API：`127.0.0.1:8080`
+- HTTP 代理：`127.0.0.1:1081`
+- SOCKS5 代理：`127.0.0.1:1080`
+- SQLite：`./data/jnmproxy.db`
+
+可复制 `config.example.yaml` 为 `config.yaml` 后调整配置。
+
+## API 示例
+
+新增订阅：
+
+```bash
+curl -X POST http://127.0.0.1:8080/api/v1/subscriptions \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"示例订阅","url":"https://example.com/sub","refresh_interval_seconds":3600}'
+```
+
+手动刷新订阅：
+
+```bash
+curl -X POST http://127.0.0.1:8080/api/v1/subscriptions/1/refresh
+```
+
+创建凭证：
+
+```bash
+curl -X POST http://127.0.0.1:8080/api/v1/credentials \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"15376259491","password":"00hhg5210","bind_mode":"all","selection_policy":"random"}'
+```
+
+使用 HTTP 代理：
+
+```bash
+curl -x http://15376259491:00hhg5210@127.0.0.1:1081 https://example.com
+```
+
+使用 SOCKS5H 代理：
+
+```bash
+curl --proxy socks5h://15376259491:00hhg5210@127.0.0.1:1080 https://example.com
+```
+
+## 重要说明
+
+- 不引入 Clash 内核。
+- 不保存订阅规则、分流规则和策略组规则。
+- 未支持的节点协议会入库，但默认不参与代理调度。
+- API 当前建议只监听本地地址，后续前端阶段再补管理端鉴权。

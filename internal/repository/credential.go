@@ -37,8 +37,8 @@ type UpdateCredentialParams struct {
 }
 
 type CredentialBindingTarget struct {
-	TargetType string
-	TargetID   int64
+	TargetType string `json:"target_type"`
+	TargetID   int64  `json:"target_id"`
 }
 
 func (repo *CredentialRepository) Create(ctx context.Context, params CreateCredentialParams) (*model.Credential, error) {

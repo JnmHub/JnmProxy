@@ -28,9 +28,9 @@ type ManagerOptions struct {
 }
 
 type RefreshResult struct {
-	SubscriptionID int64
-	NodeCount      int
-	HTTPStatus     int
+	SubscriptionID int64 `json:"subscription_id"`
+	NodeCount      int   `json:"node_count"`
+	HTTPStatus     int   `json:"http_status"`
 }
 
 func NewManager(repo *repository.SubscriptionRepository, opts ManagerOptions) *Manager {

@@ -11,9 +11,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jnmproxy/jnmproxy/internal/api"
+	"github.com/jnmproxy/jnmproxy/internal/auth"
 	"github.com/jnmproxy/jnmproxy/internal/cache"
 	"github.com/jnmproxy/jnmproxy/internal/config"
 	"github.com/jnmproxy/jnmproxy/internal/db"
+	"github.com/jnmproxy/jnmproxy/internal/grouping"
 	"github.com/jnmproxy/jnmproxy/internal/outbound"
 	proxyserver "github.com/jnmproxy/jnmproxy/internal/proxy"
 	"github.com/jnmproxy/jnmproxy/internal/repository"
@@ -66,7 +69,13 @@ func main() {
 	outboundDialer := outbound.NewDialer(30 * time.Second)
 	statsCollector := stats.NewCollector(time.Now)
 	subscriptionRepo := repository.NewSubscriptionRepository(store)
+	nodeRepo := repository.NewNodeRepository(store)
+	groupRepo := repository.NewGroupRepository(store)
+	credentialRepo := repository.NewCredentialRepository(store)
 	healthRepo := repository.NewHealthRepository(store)
+	statsRepo := repository.NewStatsRepository(store)
+	authService := auth.NewService(credentialRepo)
+	groupingService := grouping.NewService(groupRepo)
 	subscriptionManager := subscription.NewManager(subscriptionRepo, subscription.ManagerOptions{
 		RequestTimeout:   time.Duration(cfg.Subscription.RequestTimeoutSeconds) * time.Second,
 		DefaultUserAgent: cfg.Subscription.DefaultUserAgent,
@@ -81,6 +90,25 @@ func main() {
 		SubscriptionTick:    time.Duration(cfg.Scheduler.SubscriptionTickSeconds) * time.Second,
 		HealthCheckInterval: time.Duration(cfg.Scheduler.HealthCheckIntervalSeconds) * time.Second,
 		Logger:              logger,
+	}
+	apiServer := &http.Server{
+		Addr: cfg.Server.APIAddr,
+		Handler: &api.Server{
+			DB:                  store,
+			Cache:               runtimeCache,
+			SubscriptionRepo:    subscriptionRepo,
+			NodeRepo:            nodeRepo,
+			GroupRepo:           groupRepo,
+			CredentialRepo:      credentialRepo,
+			HealthRepo:          healthRepo,
+			StatsRepo:           statsRepo,
+			SubscriptionManager: subscriptionManager,
+			AuthService:         authService,
+			GroupingService:     groupingService,
+			HealthChecker:       backgroundScheduler.HealthChecker,
+			StatsCollector:      statsCollector,
+		},
+		ReadHeaderTimeout: 10 * time.Second,
 	}
 	httpProxyHandler := proxyserver.NewHTTPProxy(runtimeCache, outboundDialer)
 	httpProxyHandler.Stats = statsCollector
@@ -97,8 +125,14 @@ func main() {
 	socksServer := proxyserver.NewSOCKS5Server(runtimeCache, outboundDialer)
 	socksServer.Stats = statsCollector
 
-	errCh := make(chan error, 2)
+	errCh := make(chan error, 3)
 	go backgroundScheduler.Run(signalCtx)
+	go func() {
+		logger.Info("api server listening", "addr", cfg.Server.APIAddr)
+		if err := apiServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			errCh <- err
+		}
+	}()
 	go func() {
 		ticker := time.NewTicker(time.Duration(cfg.Stats.FlushIntervalSeconds) * time.Second)
 		defer ticker.Stop()
@@ -136,6 +170,7 @@ func main() {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = httpProxy.Shutdown(shutdownCtx)
+	_ = apiServer.Shutdown(shutdownCtx)
 	_ = socksListener.Close()
 	if err := statsCollector.Flush(context.Background(), store); err != nil {
 		logger.Error("final stats flush failed", "error", err)
