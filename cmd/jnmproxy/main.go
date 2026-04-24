@@ -16,7 +16,10 @@ import (
 	"github.com/jnmproxy/jnmproxy/internal/db"
 	"github.com/jnmproxy/jnmproxy/internal/outbound"
 	proxyserver "github.com/jnmproxy/jnmproxy/internal/proxy"
+	"github.com/jnmproxy/jnmproxy/internal/repository"
+	"github.com/jnmproxy/jnmproxy/internal/scheduler"
 	"github.com/jnmproxy/jnmproxy/internal/stats"
+	"github.com/jnmproxy/jnmproxy/internal/subscription"
 )
 
 func main() {
@@ -62,6 +65,23 @@ func main() {
 
 	outboundDialer := outbound.NewDialer(30 * time.Second)
 	statsCollector := stats.NewCollector(time.Now)
+	subscriptionRepo := repository.NewSubscriptionRepository(store)
+	healthRepo := repository.NewHealthRepository(store)
+	subscriptionManager := subscription.NewManager(subscriptionRepo, subscription.ManagerOptions{
+		RequestTimeout:   time.Duration(cfg.Subscription.RequestTimeoutSeconds) * time.Second,
+		DefaultUserAgent: cfg.Subscription.DefaultUserAgent,
+	})
+	backgroundScheduler := &scheduler.Scheduler{
+		DB:                  store,
+		Cache:               runtimeCache,
+		SubscriptionRepo:    subscriptionRepo,
+		SubscriptionManager: subscriptionManager,
+		HealthRepo:          healthRepo,
+		HealthChecker:       scheduler.NewOutboundHealthChecker(outboundDialer, cfg.Scheduler.HealthCheckTarget, 10*time.Second),
+		SubscriptionTick:    time.Duration(cfg.Scheduler.SubscriptionTickSeconds) * time.Second,
+		HealthCheckInterval: time.Duration(cfg.Scheduler.HealthCheckIntervalSeconds) * time.Second,
+		Logger:              logger,
+	}
 	httpProxyHandler := proxyserver.NewHTTPProxy(runtimeCache, outboundDialer)
 	httpProxyHandler.Stats = statsCollector
 	httpProxy := &http.Server{
@@ -78,6 +98,7 @@ func main() {
 	socksServer.Stats = statsCollector
 
 	errCh := make(chan error, 2)
+	go backgroundScheduler.Run(signalCtx)
 	go func() {
 		ticker := time.NewTicker(time.Duration(cfg.Stats.FlushIntervalSeconds) * time.Second)
 		defer ticker.Stop()

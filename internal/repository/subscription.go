@@ -123,6 +123,34 @@ ORDER BY id DESC
 	return subscriptions, nil
 }
 
+func (repo *SubscriptionRepository) ListDue(ctx context.Context, now string) ([]model.Subscription, error) {
+	rows, err := repo.db.QueryContext(ctx, `
+SELECT id, name, url, user_agent, refresh_interval_seconds, enabled, last_refresh_at,
+       next_refresh_at, last_status, last_error, upload_bytes, download_bytes,
+       total_bytes, expire_at, created_at, updated_at
+FROM subscriptions
+WHERE enabled = 1 AND (next_refresh_at IS NULL OR next_refresh_at = '' OR next_refresh_at <= ?)
+ORDER BY id ASC
+`, now)
+	if err != nil {
+		return nil, fmt.Errorf("list due subscriptions: %w", err)
+	}
+	defer rows.Close()
+
+	var subscriptions []model.Subscription
+	for rows.Next() {
+		subscription, err := scanSubscription(rows)
+		if err != nil {
+			return nil, err
+		}
+		subscriptions = append(subscriptions, *subscription)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate due subscriptions: %w", err)
+	}
+	return subscriptions, nil
+}
+
 func (repo *SubscriptionRepository) Update(ctx context.Context, id int64, params UpdateSubscriptionParams) (*model.Subscription, error) {
 	current, err := repo.Get(ctx, id)
 	if err != nil {
