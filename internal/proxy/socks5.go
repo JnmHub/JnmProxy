@@ -12,11 +12,13 @@ import (
 
 	"github.com/jnmproxy/jnmproxy/internal/cache"
 	"github.com/jnmproxy/jnmproxy/internal/outbound"
+	"github.com/jnmproxy/jnmproxy/internal/stats"
 )
 
 type SOCKS5Server struct {
 	Cache  *cache.Store
 	Dialer *outbound.Dialer
+	Stats  *stats.Collector
 }
 
 func NewSOCKS5Server(store *cache.Store, dialer *outbound.Dialer) *SOCKS5Server {
@@ -58,7 +60,7 @@ func (server *SOCKS5Server) handleConn(conn net.Conn) {
 		return
 	}
 
-	node, err := server.Cache.SelectNode(username)
+	selection, err := server.Cache.Select(username)
 	if err != nil {
 		_ = writeSOCKS5Reply(conn, 0x04)
 		return
@@ -66,8 +68,9 @@ func (server *SOCKS5Server) handleConn(conn net.Conn) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	outConn, err := server.Dialer.DialContext(ctx, node, targetAddress)
+	outConn, err := server.Dialer.DialContext(ctx, selection.Node, targetAddress)
 	if err != nil {
+		recordStats(server.Stats, selection, 0, 0, false)
 		_ = writeSOCKS5Reply(conn, 0x05)
 		return
 	}
@@ -75,9 +78,11 @@ func (server *SOCKS5Server) handleConn(conn net.Conn) {
 
 	_ = conn.SetDeadline(time.Time{})
 	if err := writeSOCKS5Reply(conn, 0x00); err != nil {
+		recordStats(server.Stats, selection, 0, 0, false)
 		return
 	}
-	pipeConnections(conn, outConn)
+	uploadBytes, downloadBytes := pipeConnections(conn, outConn)
+	recordStats(server.Stats, selection, uploadBytes, downloadBytes, true)
 }
 
 func readSOCKS5Auth(conn net.Conn) (string, string, error) {

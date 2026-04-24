@@ -12,11 +12,13 @@ import (
 
 	"github.com/jnmproxy/jnmproxy/internal/cache"
 	"github.com/jnmproxy/jnmproxy/internal/outbound"
+	"github.com/jnmproxy/jnmproxy/internal/stats"
 )
 
 type HTTPProxy struct {
 	Cache  *cache.Store
 	Dialer *outbound.Dialer
+	Stats  *stats.Collector
 }
 
 func NewHTTPProxy(store *cache.Store, dialer *outbound.Dialer) *HTTPProxy {
@@ -31,23 +33,24 @@ func (proxy *HTTPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	node, err := proxy.Cache.SelectNode(username)
+	selection, err := proxy.Cache.Select(username)
 	if err != nil {
 		http.Error(w, "no available proxy node", http.StatusServiceUnavailable)
 		return
 	}
 
 	if r.Method == http.MethodConnect {
-		proxy.handleConnect(w, r, node)
+		proxy.handleConnect(w, r, selection)
 		return
 	}
-	proxy.handleHTTP(w, r, node)
+	proxy.handleHTTP(w, r, selection)
 }
 
-func (proxy *HTTPProxy) handleConnect(w http.ResponseWriter, r *http.Request, node cache.NodeSnapshot) {
+func (proxy *HTTPProxy) handleConnect(w http.ResponseWriter, r *http.Request, selection cache.Selection) {
 	targetAddress := ensurePort(r.Host, "443")
-	outConn, err := proxy.Dialer.DialContext(r.Context(), node, targetAddress)
+	outConn, err := proxy.Dialer.DialContext(r.Context(), selection.Node, targetAddress)
 	if err != nil {
+		recordStats(proxy.Stats, selection, 0, 0, false)
 		http.Error(w, "connect upstream failed", http.StatusBadGateway)
 		return
 	}
@@ -55,26 +58,31 @@ func (proxy *HTTPProxy) handleConnect(w http.ResponseWriter, r *http.Request, no
 	hijacker, ok := w.(http.Hijacker)
 	if !ok {
 		_ = outConn.Close()
+		recordStats(proxy.Stats, selection, 0, 0, false)
 		http.Error(w, "hijacking not supported", http.StatusInternalServerError)
 		return
 	}
 	clientConn, _, err := hijacker.Hijack()
 	if err != nil {
 		_ = outConn.Close()
+		recordStats(proxy.Stats, selection, 0, 0, false)
 		return
 	}
 	if _, err := io.WriteString(clientConn, "HTTP/1.1 200 Connection Established\r\n\r\n"); err != nil {
 		_ = clientConn.Close()
 		_ = outConn.Close()
+		recordStats(proxy.Stats, selection, 0, 0, false)
 		return
 	}
-	pipeConnections(clientConn, outConn)
+	uploadBytes, downloadBytes := pipeConnections(clientConn, outConn)
+	recordStats(proxy.Stats, selection, uploadBytes, downloadBytes, true)
 }
 
-func (proxy *HTTPProxy) handleHTTP(w http.ResponseWriter, r *http.Request, node cache.NodeSnapshot) {
+func (proxy *HTTPProxy) handleHTTP(w http.ResponseWriter, r *http.Request, selection cache.Selection) {
 	targetAddress := httpTargetAddress(r)
-	outConn, err := proxy.Dialer.DialContext(r.Context(), node, targetAddress)
+	outConn, err := proxy.Dialer.DialContext(r.Context(), selection.Node, targetAddress)
 	if err != nil {
+		recordStats(proxy.Stats, selection, 0, 0, false)
 		http.Error(w, "connect upstream failed", http.StatusBadGateway)
 		return
 	}
@@ -89,12 +97,14 @@ func (proxy *HTTPProxy) handleHTTP(w http.ResponseWriter, r *http.Request, node 
 	outReq.Header.Del("Proxy-Connection")
 
 	if err := outReq.Write(outConn); err != nil {
+		recordStats(proxy.Stats, selection, requestUploadBytes(r), 0, false)
 		http.Error(w, "write upstream request failed", http.StatusBadGateway)
 		return
 	}
 
 	resp, err := http.ReadResponse(bufio.NewReader(outConn), outReq)
 	if err != nil {
+		recordStats(proxy.Stats, selection, requestUploadBytes(r), 0, false)
 		http.Error(w, "read upstream response failed", http.StatusBadGateway)
 		return
 	}
@@ -102,7 +112,8 @@ func (proxy *HTTPProxy) handleHTTP(w http.ResponseWriter, r *http.Request, node 
 
 	copyHeader(w.Header(), resp.Header)
 	w.WriteHeader(resp.StatusCode)
-	_, _ = io.Copy(w, resp.Body)
+	downloadBytes, _ := io.Copy(w, resp.Body)
+	recordStats(proxy.Stats, selection, requestUploadBytes(r), downloadBytes, resp.StatusCode < 500)
 }
 
 func (proxy *HTTPProxy) verifyCredential(username string, password string) bool {
@@ -156,22 +167,37 @@ func copyHeader(dst http.Header, src http.Header) {
 	}
 }
 
-func pipeConnections(left net.Conn, right net.Conn) {
+func pipeConnections(left net.Conn, right net.Conn) (int64, int64) {
 	var closeOnce sync.Once
 	closeBoth := func() {
 		_ = left.Close()
 		_ = right.Close()
 	}
-	done := make(chan struct{}, 2)
+	type copyResult struct {
+		leftToRight bool
+		bytes       int64
+	}
+	done := make(chan copyResult, 2)
 	go func() {
-		_, _ = io.Copy(left, right)
+		bytes, _ := io.Copy(left, right)
 		closeOnce.Do(closeBoth)
-		done <- struct{}{}
+		done <- copyResult{leftToRight: false, bytes: bytes}
 	}()
 	go func() {
-		_, _ = io.Copy(right, left)
+		bytes, _ := io.Copy(right, left)
 		closeOnce.Do(closeBoth)
-		done <- struct{}{}
+		done <- copyResult{leftToRight: true, bytes: bytes}
 	}()
-	<-done
+	first := <-done
+	second := <-done
+
+	var uploadBytes, downloadBytes int64
+	for _, result := range []copyResult{first, second} {
+		if result.leftToRight {
+			uploadBytes += result.bytes
+		} else {
+			downloadBytes += result.bytes
+		}
+	}
+	return uploadBytes, downloadBytes
 }

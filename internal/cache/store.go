@@ -44,6 +44,12 @@ type NodeSnapshot struct {
 	GroupIDs       []int64
 }
 
+type Selection struct {
+	Credential CredentialSnapshot
+	Node       NodeSnapshot
+	GroupID    int64
+}
+
 type Store struct {
 	mu                    sync.RWMutex
 	credentialsByUsername map[string]CredentialSnapshot
@@ -88,17 +94,25 @@ func (store *Store) Credential(username string) (CredentialSnapshot, bool) {
 }
 
 func (store *Store) SelectNode(username string) (NodeSnapshot, error) {
+	selection, err := store.Select(username)
+	if err != nil {
+		return NodeSnapshot{}, err
+	}
+	return selection.Node, nil
+}
+
+func (store *Store) Select(username string) (Selection, error) {
 	store.mu.Lock()
 	defer store.mu.Unlock()
 
 	credential, ok := store.credentialsByUsername[username]
 	if !ok || !credential.Enabled {
-		return NodeSnapshot{}, ErrCredentialNotFound
+		return Selection{}, ErrCredentialNotFound
 	}
 
 	candidateIDs := store.candidateIDsLocked(credential)
 	if len(candidateIDs) == 0 {
-		return NodeSnapshot{}, ErrNoCandidateNodes
+		return Selection{}, ErrNoCandidateNodes
 	}
 
 	selectedID := candidateIDs[0]
@@ -107,9 +121,13 @@ func (store *Store) SelectNode(username string) (NodeSnapshot, error) {
 	}
 	node, ok := store.nodesByID[selectedID]
 	if !ok {
-		return NodeSnapshot{}, ErrNoCandidateNodes
+		return Selection{}, ErrNoCandidateNodes
 	}
-	return node, nil
+	return Selection{
+		Credential: credential,
+		Node:       node,
+		GroupID:    store.selectedGroupIDLocked(credential, selectedID),
+	}, nil
 }
 
 func (store *Store) candidateIDsLocked(credential CredentialSnapshot) []int64 {
@@ -148,6 +166,23 @@ func (store *Store) candidateIDsLocked(credential CredentialSnapshot) []int64 {
 	default:
 		return nil
 	}
+}
+
+func (store *Store) selectedGroupIDLocked(credential CredentialSnapshot, nodeID int64) int64 {
+	if credential.BindMode != model.CredentialBindModeGroup {
+		return 0
+	}
+	for _, binding := range credential.Bindings {
+		if binding.TargetType != "group" {
+			continue
+		}
+		for _, candidateID := range store.groupNodeIDs[binding.TargetID] {
+			if candidateID == nodeID {
+				return binding.TargetID
+			}
+		}
+	}
+	return 0
 }
 
 func loadSnapshot(ctx context.Context, db *sql.DB) (*Store, error) {

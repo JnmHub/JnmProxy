@@ -22,6 +22,7 @@ import (
 	"github.com/jnmproxy/jnmproxy/internal/db"
 	"github.com/jnmproxy/jnmproxy/internal/outbound"
 	"github.com/jnmproxy/jnmproxy/internal/repository"
+	"github.com/jnmproxy/jnmproxy/internal/stats"
 )
 
 func TestHTTPProxyGETThroughHTTPOutbound(t *testing.T) {
@@ -35,7 +36,12 @@ func TestHTTPProxyGETThroughHTTPOutbound(t *testing.T) {
 	defer upstream.Close()
 
 	runtimeCache := testRuntimeCache(t, ctx, upstream.URL)
-	proxyServer := httptest.NewServer(NewHTTPProxy(runtimeCache, outbound.NewDialer(2*time.Second)))
+	statsCollector := stats.NewCollector(func() time.Time {
+		return time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
+	})
+	handler := NewHTTPProxy(runtimeCache, outbound.NewDialer(2*time.Second))
+	handler.Stats = statsCollector
+	proxyServer := httptest.NewServer(handler)
 	defer proxyServer.Close()
 
 	proxyURL, err := url.Parse(proxyServer.URL)
@@ -63,6 +69,16 @@ func TestHTTPProxyGETThroughHTTPOutbound(t *testing.T) {
 	}
 	if resp.StatusCode != http.StatusOK || string(body) != "ok:/hello" {
 		t.Fatalf("unexpected response status=%d body=%q", resp.StatusCode, string(body))
+	}
+
+	hourly, _ := statsCollector.Snapshot()
+	if len(hourly) != 1 {
+		t.Fatalf("expected one hourly stats key, got %d", len(hourly))
+	}
+	for _, counter := range hourly {
+		if counter.Connections != 1 || counter.SuccessConnections != 1 || counter.DownloadBytes != int64(len(body)) {
+			t.Fatalf("unexpected stats counter: %#v", counter)
+		}
 	}
 }
 

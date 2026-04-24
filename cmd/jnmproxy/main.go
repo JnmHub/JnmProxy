@@ -16,6 +16,7 @@ import (
 	"github.com/jnmproxy/jnmproxy/internal/db"
 	"github.com/jnmproxy/jnmproxy/internal/outbound"
 	proxyserver "github.com/jnmproxy/jnmproxy/internal/proxy"
+	"github.com/jnmproxy/jnmproxy/internal/stats"
 )
 
 func main() {
@@ -56,10 +57,16 @@ func main() {
 		os.Exit(1)
 	}
 
+	signalCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	outboundDialer := outbound.NewDialer(30 * time.Second)
+	statsCollector := stats.NewCollector(time.Now)
+	httpProxyHandler := proxyserver.NewHTTPProxy(runtimeCache, outboundDialer)
+	httpProxyHandler.Stats = statsCollector
 	httpProxy := &http.Server{
 		Addr:              cfg.Proxy.HTTPAddr,
-		Handler:           proxyserver.NewHTTPProxy(runtimeCache, outboundDialer),
+		Handler:           httpProxyHandler,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	socksListener, err := net.Listen("tcp", cfg.Proxy.SOCKSAddr)
@@ -68,8 +75,23 @@ func main() {
 		os.Exit(1)
 	}
 	socksServer := proxyserver.NewSOCKS5Server(runtimeCache, outboundDialer)
+	socksServer.Stats = statsCollector
 
 	errCh := make(chan error, 2)
+	go func() {
+		ticker := time.NewTicker(time.Duration(cfg.Stats.FlushIntervalSeconds) * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-signalCtx.Done():
+				return
+			case <-ticker.C:
+				if err := statsCollector.Flush(context.Background(), store); err != nil {
+					logger.Error("flush stats failed", "error", err)
+				}
+			}
+		}
+	}()
 	go func() {
 		logger.Info("http proxy listening", "addr", cfg.Proxy.HTTPAddr)
 		if err := httpProxy.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -83,9 +105,6 @@ func main() {
 		}
 	}()
 
-	signalCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
 	select {
 	case <-signalCtx.Done():
 		logger.Info("shutdown signal received")
@@ -97,4 +116,7 @@ func main() {
 	defer cancel()
 	_ = httpProxy.Shutdown(shutdownCtx)
 	_ = socksListener.Close()
+	if err := statsCollector.Flush(context.Background(), store); err != nil {
+		logger.Error("final stats flush failed", "error", err)
+	}
 }
