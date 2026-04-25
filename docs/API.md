@@ -10,6 +10,27 @@ API 前缀：`/api/v1`
 
 ## 系统
 
+### `GET /search?q=关键词`
+
+全局搜索节点、订阅、分组、凭证、操作日志和请求日志。
+
+响应：
+
+```json
+{
+  "query": "香港",
+  "items": [
+    {
+      "type": "node",
+      "id": 1,
+      "title": "香港 HK 01",
+      "subtitle": "节点 / vmess / 1.2.3.4:443",
+      "url": "/nodes?search=香港"
+    }
+  ]
+}
+```
+
 ### `GET /system/health`
 
 返回系统健康状态。
@@ -111,6 +132,20 @@ API 前缀：`/api/v1`
 
 ## 节点
 
+### `GET /runtime/nodes`
+
+查看内存里的节点运行态。
+
+响应字段：
+
+- `node_id`：节点 ID。
+- `failure_count`：当前内存连续失败次数。
+- `circuit_open`：是否正在短期熔断。
+- `circuit_until`：熔断恢复时间。
+- `in_candidate_pool`：当前是否还在运行候选池。
+- `last_failure`：最近一次代理失败原因。
+- `last_failed_at`：最近一次代理失败时间。
+
 ### `GET /nodes`
 
 节点列表，支持查询参数：
@@ -178,6 +213,47 @@ API 前缀：`/api/v1`
 - `disable`
 - `add_group`
 - `remove_group`
+
+## 代理请求日志
+
+### `GET /proxy-request-logs`
+
+查看代理请求最终失败日志，支持分页和搜索。
+
+查询参数：
+
+- `page`
+- `page_size`
+- `search`
+- `status`
+- `entry_protocol`
+
+响应：
+
+```json
+{
+  "items": [
+    {
+      "id": 1,
+      "entry_protocol": "SOCKS5",
+      "credential_id": 1,
+      "username": "user",
+      "target_address": "example.com:443",
+      "status": "failed",
+      "attempt_count": 2,
+      "selected_node_id": 0,
+      "selected_node_name": "",
+      "error": "dial failed",
+      "attempts_json": "[{\"node_id\":1,\"node_name\":\"香港 HK 01\",\"success\":false,\"error\":\"dial failed\"}]",
+      "duration_ms": 120,
+      "created_at": "2026-04-25T12:00:00Z"
+    }
+  ],
+  "total": 1,
+  "page": 1,
+  "page_size": 50
+}
+```
 
 ## 分组
 

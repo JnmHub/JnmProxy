@@ -17,6 +17,11 @@ JnmProxy 是一个 Go 代理池系统，基于机场订阅链接维护代理节�
 - `hysteria2`、`hy2`、`tuic` 依赖 QUIC，构建或测试时需要增加 `-tags with_quic`。
 - 订阅刷新会为节点生成 `sing_box_outbound_json`、`sing_box_status`、`sing_box_error`、`sing_box_version`、`udp_supported`、`transport_type` 等适配字段。
 - 流量统计先写内存，再定时批量写入 SQLite。
+- 代理请求遇到坏节点时，会在同一次请求内自动换另一个节点重试，默认最多尝试 3 个不同节点。
+- 节点连续失败会进入内存熔断，默认连续失败 3 次后临时避开 60 秒。
+- 节点页可查看运行态候选池、连续失败、熔断恢复时间和最近失败原因。
+- 新增代理请求失败日志，能看到入口协议、凭证、目标地址、尝试节点、失败原因和耗时。
+- 顶部全局搜索支持节点、订阅、分组、凭证、操作日志和请求日志快速跳转。
 - 定时刷新订阅和节点健康检查已接入，健康检查可覆盖 sing-box 节点。
 - 提供 `/api/v1` 后端管理 API。
 - Go 后端会托管内嵌的前端管理后台，访问 `http://127.0.0.1:8080/` 即可打开页面。
@@ -47,6 +52,23 @@ go run -tags "with_quic with_utls" ./cmd/jnmproxy
 - SQLite：`./data/jnmproxy.db`
 
 可复制 `config.example.yaml` 为 `config.yaml` 后调整配置。
+
+## 运行态兜底配置
+
+`runtime` 配置控制“坏节点自动换”和“内存熔断”：
+
+```yaml
+runtime:
+  max_attempts_per_request: 3
+  failure_threshold: 3
+  circuit_break_seconds: 60
+  record_failed_requests: true
+```
+
+- `max_attempts_per_request`：同一次 HTTP CONNECT / SOCKS5 请求最多尝试几个不同节点。
+- `failure_threshold`：同一个节点连续失败多少次后进入短期熔断。
+- `circuit_break_seconds`：熔断持续多久，时间到后会重新进入候选池。
+- `record_failed_requests`：是否记录代理请求最终失败日志，默认只记失败请求，避免成功请求过多写库。
 
 ## 前端开发
 

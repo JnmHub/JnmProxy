@@ -20,6 +20,9 @@ func TestLoadMissingFileUsesDefaults(t *testing.T) {
 	if cfg.Scheduler.HealthCheckTarget != "www.gstatic.com:443" {
 		t.Fatalf("unexpected health check target: %s", cfg.Scheduler.HealthCheckTarget)
 	}
+	if cfg.Runtime.MaxAttemptsPerRequest != 3 || cfg.Runtime.FailureThreshold != 3 || cfg.Runtime.CircuitBreakSeconds != 60 || !cfg.Runtime.RecordFailedRequests {
+		t.Fatalf("unexpected runtime defaults: %#v", cfg.Runtime)
+	}
 	if !cfg.SingBox.Enabled || cfg.SingBox.Version != "v1.13.8" || cfg.SingBox.Mode != "auto" {
 		t.Fatalf("unexpected sing-box defaults: %#v", cfg.SingBox)
 	}
@@ -42,6 +45,8 @@ subscription:
 	t.Setenv("JNMPROXY_SING_BOX_MODE", "dialer")
 	t.Setenv("JNMPROXY_SING_BOX_ENABLE_UDP", "true")
 	t.Setenv("JNMPROXY_ADMIN_TOKEN", "env-token")
+	t.Setenv("JNMPROXY_RUNTIME_MAX_ATTEMPTS_PER_REQUEST", "5")
+	t.Setenv("JNMPROXY_RUNTIME_RECORD_FAILED_REQUESTS", "false")
 
 	cfg, err := Load(path)
 	if err != nil {
@@ -64,6 +69,9 @@ subscription:
 	}
 	if cfg.Admin.Token != "env-token" {
 		t.Fatalf("unexpected admin token: %s", cfg.Admin.Token)
+	}
+	if cfg.Runtime.MaxAttemptsPerRequest != 5 || cfg.Runtime.RecordFailedRequests {
+		t.Fatalf("unexpected runtime env override: %#v", cfg.Runtime)
 	}
 }
 

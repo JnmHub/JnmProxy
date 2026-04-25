@@ -16,6 +16,12 @@ subscription:
 stats:
   flush_interval_seconds: 10
 
+runtime:
+  max_attempts_per_request: 3
+  failure_threshold: 3
+  circuit_break_seconds: 60
+  record_failed_requests: true
+
 scheduler:
   subscription_tick_seconds: 30
   health_check_interval_seconds: 300
