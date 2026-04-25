@@ -1,8 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Activity, Eye, Filter, RefreshCw, RotateCcw, Search, ShieldCheck } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useDeferredValue, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { batchNodes, checkAllNodes, checkNode, listNodes, rebuildNodeAdapter, setNodeEnabled, type NodeBatchAction, type NodeFilter } from '../api/nodes';
+import { batchNodes, checkAllNodes, checkNode, listNodePage, rebuildNodeAdapter, setNodeEnabled, type NodeBatchAction, type NodeFilter } from '../api/nodes';
 import { listGroups } from '../api/groups';
 import { listSubscriptions } from '../api/subscriptions';
 import type { ProxyGroup, ProxyNode } from '../api/types';
@@ -14,6 +14,7 @@ import { Drawer } from '../components/ui/Drawer';
 import { Field, Input, Select } from '../components/ui/Input';
 import { JsonBlock } from '../components/ui/JsonBlock';
 import { LoadingState } from '../components/ui/LoadingState';
+import { PaginationBar } from '../components/ui/Pagination';
 import { DataTable } from '../components/ui/Table';
 import { formatTime } from '../utils/format';
 import { statusLabel } from '../utils/status';
@@ -21,13 +22,24 @@ import { statusLabel } from '../utils/status';
 export function NodesPage() {
   const [params] = useSearchParams();
   const [search, setSearch] = useState('');
+  const deferredSearch = useDeferredValue(search.trim());
+  const [region, setRegion] = useState('');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
   const [filter, setFilter] = useState<NodeFilter>({ subscription_id: Number(params.get('subscription_id')) || undefined });
   const [selected, setSelected] = useState<number[]>([]);
   const [detail, setDetail] = useState<ProxyNode | null>(null);
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
   const queryClient = useQueryClient();
 
-  const nodesQuery = useQuery({ queryKey: ['nodes', filter], queryFn: () => listNodes(filter) });
+  const pageFilter = useMemo(() => ({
+    ...filter,
+    search: deferredSearch || undefined,
+    region: region || undefined,
+    page,
+    page_size: pageSize,
+  }), [deferredSearch, filter, page, pageSize, region]);
+  const nodesQuery = useQuery({ queryKey: ['nodes', 'page', pageFilter], queryFn: () => listNodePage(pageFilter) });
   const subscriptionsQuery = useQuery({ queryKey: ['subscriptions'], queryFn: listSubscriptions });
   const groupsQuery = useQuery({ queryKey: ['groups'], queryFn: listGroups });
 
@@ -45,25 +57,41 @@ export function NodesPage() {
     onSuccess: () => { setSelected([]); invalidate(); },
   });
 
-  const rawNodes = nodesQuery.data ?? [];
-  const nodes = useMemo(() => {
-    const keyword = search.trim().toLowerCase();
-    if (!keyword) return rawNodes;
-    return rawNodes.filter((node) => [node.name, node.server, node.protocol].some((value) => value.toLowerCase().includes(keyword)));
-  }, [rawNodes, search]);
-  const protocolOptions = useMemo(() => unique(rawNodes.map((node) => node.protocol).filter(Boolean)), [rawNodes]);
+  const nodePage = nodesQuery.data;
+  const nodes = nodePage?.items ?? [];
+  const total = nodePage?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const protocolOptions = commonProtocols;
   const subscriptionNames = useMemo(() => new Map((subscriptionsQuery.data ?? []).map((item) => [item.id, item.name])), [subscriptionsQuery.data]);
   const groupNames = useMemo(() => new Map((groupsQuery.data ?? []).map((group) => [group.id, group.name])), [groupsQuery.data]);
   const summary = useMemo(() => nodeSummary(nodes), [nodes]);
   const allSelected = selected.length > 0 && selected.length === nodes.length;
 
+  useEffect(() => {
+    if (page > totalPages) {
+      setPage(totalPages);
+    }
+  }, [page, totalPages]);
+
   const updateFilter = (next: NodeFilter) => {
     setFilter(next);
+    setPage(1);
     setSelected([]);
   };
   const clearFilters = () => {
     setSearch('');
+    setRegion('');
     updateFilter({});
+  };
+  const updateSearch = (value: string) => {
+    setSearch(value);
+    setPage(1);
+    setSelected([]);
+  };
+  const updateRegion = (value: string) => {
+    setRegion(value);
+    setPage(1);
+    setSelected([]);
   };
   const toggleSelected = (nodeID: number, checked: boolean) => {
     setSelected((prev) => checked ? uniqueNumbers([...prev, nodeID]) : prev.filter((id) => id !== nodeID));
@@ -109,24 +137,24 @@ export function NodesPage() {
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-        <SummaryCard title="当前结果" value={nodes.length} hint="筛选后的节点" />
-        <SummaryCard title="可用节点" value={summary.alive} hint="alive_status = alive" tone="success" />
-        <SummaryCard title="死亡节点" value={summary.dead} hint="alive_status = dead" tone="danger" />
-        <SummaryCard title="sing-box 支持" value={summary.singBoxSupported} hint="可走复杂协议适配" tone="success" />
-        <SummaryCard title="适配异常" value={summary.singBoxError} hint="需要查看错误原因" tone="warning" />
+        <SummaryCard title="匹配总数" value={total} hint="服务端筛选后的总节点" />
+        <SummaryCard title="当前页" value={nodes.length} hint={`第 ${page} / ${totalPages} 页`} />
+        <SummaryCard title="本页可用" value={summary.alive} hint="alive_status = alive" tone="success" />
+        <SummaryCard title="本页死亡" value={summary.dead} hint="alive_status = dead" tone="danger" />
+        <SummaryCard title="本页适配异常" value={summary.singBoxError} hint="需要查看错误原因" tone="warning" />
       </div>
 
       <Card>
         <CardHeader
           title="筛选"
-          description="服务端筛选优先，名称/服务器搜索在当前结果里即时过滤。"
+          description="搜索、协议和地区都走服务端筛选；节点很多时不会一次性拉全量表格。"
           action={<Button onClick={requestCheckAll} disabled={checkAllMutation.isPending}><RefreshCw className="h-4 w-4" />全部健康检查</Button>}
         />
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-7">
           <Field label="搜索">
             <div className="relative">
               <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-500" />
-              <Input className="pl-9" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="名称 / 服务器 / 协议" />
+              <Input className="pl-9" value={search} onChange={(event) => updateSearch(event.target.value)} placeholder="名称 / 服务器 / 协议" />
             </div>
           </Field>
           <Field label="订阅">
@@ -172,15 +200,25 @@ export function NodesPage() {
           </Field>
         </div>
         <div className="mt-4 flex flex-wrap gap-2">
+          {regionOptions.map((item) => (
+            <Button key={item.value || 'all'} variant={region === item.value ? 'primary' : 'secondary'} onClick={() => updateRegion(item.value)}>
+              {item.label}
+            </Button>
+          ))}
           <Button variant="ghost" onClick={clearFilters}><Filter className="h-4 w-4" />清空筛选</Button>
           <Button disabled={!selected.length || checkSelectedMutation.isPending} onClick={requestCheckSelected}><Activity className="h-4 w-4" />检查已选</Button>
         </div>
       </Card>
 
       <Card>
-        <CardHeader title="节点列表" description={`当前 ${nodes.length} 个节点，已选 ${selected.length} 个。`} action={<BatchActions selected={selected} groups={groupsQuery.data ?? []} onBatch={requestBatch} />} />
+        <CardHeader
+          title="节点列表"
+          description={`共匹配 ${total} 个节点，本页 ${nodes.length} 个，已选 ${selected.length} 个。`}
+          action={<BatchActions selected={selected} groups={groupsQuery.data ?? []} onBatch={requestBatch} />}
+        />
         {nodesQuery.isLoading ? <LoadingState /> : (
-          <DataTable columns={['选择', '节点', '来源', '状态', '协议', '延迟', '服务器', '操作']} empty={!nodes.length}>
+          <>
+            <DataTable columns={['选择', '节点', '来源', '状态', '协议', '延迟', '服务器', '操作']} empty={!nodes.length}>
             {nodes.map((node) => (
               <tr key={node.id} className="hover:bg-slate-900/50">
                 <td className="px-4 py-3">
@@ -218,10 +256,19 @@ export function NodesPage() {
                 <td className="px-4 py-3">
                   <input type="checkbox" checked={allSelected} onChange={(event) => setSelected(event.target.checked ? nodes.map((node) => node.id) : [])} />
                 </td>
-                <td className="px-4 py-3 text-xs text-slate-500" colSpan={7}>全选当前筛选结果</td>
+                <td className="px-4 py-3 text-xs text-slate-500" colSpan={7}>全选当前页</td>
               </tr>
             ) : null}
-          </DataTable>
+            </DataTable>
+            <PaginationBar
+              page={page}
+              pageSize={pageSize}
+              total={total}
+              totalPages={totalPages}
+              onPageChange={(nextPage) => { setPage(nextPage); setSelected([]); }}
+              onPageSizeChange={(nextPageSize) => { setPageSize(nextPageSize); setPage(1); setSelected([]); }}
+            />
+          </>
         )}
       </Card>
 
@@ -340,10 +387,18 @@ function groupLabel(groupIDs: number[] | undefined, groupNames: Map<number, stri
   return groupIDs.map((id) => groupNames.get(id) ?? `分组 ${id}`).join('、');
 }
 
-function unique(values: string[]) {
-  return [...new Set(values)].sort((left, right) => left.localeCompare(right));
-}
-
 function uniqueNumbers(values: number[]) {
   return [...new Set(values)];
 }
+
+const commonProtocols = ['http', 'https', 'socks', 'socks5', 'socks5h', 'ss', 'shadowsocks', 'vmess', 'vless', 'trojan', 'hysteria2', 'hy2', 'tuic'];
+
+const regionOptions = [
+  { label: '全部地区', value: '' },
+  { label: '香港', value: 'hk' },
+  { label: '日本', value: 'jp' },
+  { label: '美国', value: 'us' },
+  { label: '新加坡', value: 'sg' },
+  { label: '台湾', value: 'tw' },
+  { label: '韩国', value: 'kr' },
+];

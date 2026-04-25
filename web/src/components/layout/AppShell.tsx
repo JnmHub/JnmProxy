@@ -1,4 +1,4 @@
-import { Activity, BarChart3, FolderKanban, Gauge, KeyRound, Menu, Network, Rss, Search, ServerCog, Settings, Tags, X } from 'lucide-react';
+import { Activity, BarChart3, FileText, FolderKanban, Gauge, KeyRound, Menu, Network, Rss, Search, ServerCog, Settings, Tags, X } from 'lucide-react';
 import { useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
@@ -13,6 +13,7 @@ const navItems = [
   { to: '/keyword-groups', label: '关键词分组', icon: Tags },
   { to: '/credentials', label: '凭证管理', icon: KeyRound },
   { to: '/stats', label: '流量统计', icon: BarChart3 },
+  { to: '/operation-logs', label: '操作日志', icon: FileText },
   { to: '/system', label: '系统状态', icon: ServerCog },
   { to: '/settings', label: '设置', icon: Settings },
 ];

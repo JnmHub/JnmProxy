@@ -73,6 +73,14 @@ proxies:
 	}
 	node := nodes[0].(map[string]any)
 	nodeID := int64(node["id"].(float64))
+	nodePage := getJSON(t, handler, "/api/v1/nodes/page?search=香港&region=hk&page=1&page_size=10").(map[string]any)
+	if nodePage["total"].(float64) != 1 {
+		t.Fatalf("expected one paged node, got %#v", nodePage)
+	}
+	nodeSummary := getJSON(t, handler, "/api/v1/nodes/summary").(map[string]any)
+	if nodeSummary["total"].(float64) != 1 {
+		t.Fatalf("expected node summary total to be 1: %#v", nodeSummary)
+	}
 
 	var rebuiltNodeID int64
 	handler.NodeAdapterInvalidator = func(id int64) {
@@ -134,6 +142,15 @@ proxies:
 	if overview["connections"].(float64) != 0 {
 		t.Fatalf("unexpected stats overview: %#v", overview)
 	}
+
+	operationLogs := getJSON(t, handler, "/api/v1/operation-logs?page_size=20").(map[string]any)
+	if operationLogs["total"].(float64) == 0 {
+		t.Fatalf("expected operation logs to be recorded: %#v", operationLogs)
+	}
+	logItems := operationLogs["items"].([]any)
+	if len(logItems) == 0 {
+		t.Fatalf("expected operation log items: %#v", operationLogs)
+	}
 }
 
 func TestAdminTokenProtectsAPI(t *testing.T) {
@@ -172,6 +189,7 @@ func newTestServer(t *testing.T, store *sql.DB) *Server {
 		CredentialRepo:      credentialRepo,
 		HealthRepo:          repository.NewHealthRepository(store),
 		StatsRepo:           repository.NewStatsRepository(store),
+		OperationLogRepo:    repository.NewOperationLogRepository(store),
 		SubscriptionManager: subscription.NewManager(subRepo, subscription.ManagerOptions{RequestTimeout: 2 * time.Second}),
 		AuthService:         auth.NewService(credentialRepo),
 		GroupingService:     grouping.NewService(groupRepo),

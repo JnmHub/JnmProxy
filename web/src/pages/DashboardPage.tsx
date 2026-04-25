@@ -3,7 +3,7 @@ import { Activity, CheckCircle2, Database, Network, Rss, ShieldCheck, TrafficCon
 import { getSingBoxStatus, getSystemHealth } from '../api/system';
 import { getTrafficOverview } from '../api/stats';
 import { listSubscriptions } from '../api/subscriptions';
-import { listNodes } from '../api/nodes';
+import { getNodeSummary } from '../api/nodes';
 import { MetricCard } from '../components/charts/MetricCard';
 import { Badge } from '../components/ui/Badge';
 import { Card, CardHeader } from '../components/ui/Card';
@@ -15,12 +15,13 @@ export function DashboardPage() {
   const singBoxQuery = useQuery({ queryKey: ['system', 'sing-box'], queryFn: getSingBoxStatus });
   const statsQuery = useQuery({ queryKey: ['stats', 'overview'], queryFn: getTrafficOverview });
   const subscriptionsQuery = useQuery({ queryKey: ['subscriptions'], queryFn: listSubscriptions });
-  const nodesQuery = useQuery({ queryKey: ['nodes'], queryFn: () => listNodes() });
+  const nodeSummaryQuery = useQuery({ queryKey: ['nodes', 'summary'], queryFn: getNodeSummary });
 
-  const nodes = nodesQuery.data ?? [];
+  const nodeSummary = nodeSummaryQuery.data;
   const subscriptions = subscriptionsQuery.data ?? [];
-  const aliveCount = nodes.filter((node) => node.alive_status === 'alive').length;
-  const deadCount = nodes.filter((node) => node.alive_status === 'dead').length;
+  const aliveCount = nodeSummary?.alive ?? 0;
+  const deadCount = nodeSummary?.dead ?? 0;
+  const nodeCount = nodeSummary?.total ?? 0;
 
   return (
     <div className="space-y-6">
@@ -36,8 +37,8 @@ export function DashboardPage() {
         <MetricCard title="订阅数量" value={compactNumber(subscriptions.length)} hint="已保存订阅链接" icon={<Rss className="h-5 w-5" />} />
         <MetricCard title="上传流量" value={formatBytes(statsQuery.data?.upload_bytes)} hint="内存统计会先 flush" icon={<Activity className="h-5 w-5" />} />
         <MetricCard title="下载流量" value={formatBytes(statsQuery.data?.download_bytes)} hint="所有入口统一统计" icon={<Database className="h-5 w-5" />} />
-        <MetricCard title="节点数量" value={compactNumber(nodes.length)} hint={`可用 ${aliveCount} / 死亡 ${deadCount}`} icon={<Network className="h-5 w-5" />} />
-        <MetricCard title="异常节点" value={compactNumber(deadCount)} hint={`未知 ${nodes.length - aliveCount - deadCount}`} icon={<XCircle className="h-5 w-5 text-amber-300" />} />
+        <MetricCard title="节点数量" value={compactNumber(nodeCount)} hint={`可用 ${aliveCount} / 死亡 ${deadCount}`} icon={<Network className="h-5 w-5" />} />
+        <MetricCard title="异常节点" value={compactNumber(deadCount)} hint={`未知 ${nodeSummary?.unknown ?? 0}`} icon={<XCircle className="h-5 w-5 text-amber-300" />} />
       </div>
       <div className="grid gap-4 xl:grid-cols-3">
         <Card>

@@ -1,5 +1,5 @@
 import { apiRequest } from './client';
-import type { AdapterStatus, AliveStatus, ProxyNode } from './types';
+import type { AdapterStatus, AliveStatus, ProxyNode, ProxyNodePage, ProxyNodeSummary } from './types';
 
 export interface NodeFilter {
   subscription_id?: number;
@@ -8,6 +8,13 @@ export interface NodeFilter {
   alive_status?: AliveStatus | '';
   sing_box_status?: AdapterStatus | '';
   enabled?: boolean | '';
+}
+
+export interface NodePageFilter extends NodeFilter {
+  search?: string;
+  region?: string;
+  page?: number;
+  page_size?: number;
 }
 
 export type NodeBatchAction = 'enable' | 'disable' | 'add_group' | 'remove_group';
@@ -24,6 +31,14 @@ function queryString(filter: NodeFilter = {}) {
 
 export function listNodes(filter?: NodeFilter) {
   return apiRequest<ProxyNode[]>(`/nodes${queryString(filter)}`);
+}
+
+export function listNodePage(filter?: NodePageFilter) {
+  return apiRequest<ProxyNodePage>(`/nodes/page${queryString(filter)}`);
+}
+
+export function getNodeSummary() {
+  return apiRequest<ProxyNodeSummary>('/nodes/summary');
 }
 
 export function getNode(id: number) {

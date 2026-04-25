@@ -20,6 +20,24 @@ type NodeListFilter struct {
 	AliveStatus    string
 	SingBoxStatus  string
 	Enabled        *bool
+	Search         string
+	Region         string
+	Page           int
+	PageSize       int
+}
+
+type NodeListResult struct {
+	Items    []model.ProxyNode `json:"items"`
+	Total    int               `json:"total"`
+	Page     int               `json:"page"`
+	PageSize int               `json:"page_size"`
+}
+
+type NodeSummary struct {
+	Total   int `json:"total"`
+	Alive   int `json:"alive"`
+	Dead    int `json:"dead"`
+	Unknown int `json:"unknown"`
 }
 
 func NewNodeRepository(db *sql.DB) *NodeRepository {
@@ -48,7 +66,73 @@ WHERE id = ?
 }
 
 func (repo *NodeRepository) List(ctx context.Context, filter NodeListFilter) ([]model.ProxyNode, error) {
-	query := `
+	query, args := buildNodeListQuery(filter, false)
+	query += "ORDER BY n.id DESC"
+
+	rows, err := repo.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list nodes: %w", err)
+	}
+	defer rows.Close()
+
+	nodes, err := scanProxyNodes(rows)
+	if err != nil {
+		return nil, err
+	}
+	if err := repo.attachNodeGroupIDs(ctx, nodes); err != nil {
+		return nil, err
+	}
+	return nodes, nil
+}
+
+func (repo *NodeRepository) ListPage(ctx context.Context, filter NodeListFilter) (*NodeListResult, error) {
+	page, pageSize := normalizePage(filter.Page, filter.PageSize)
+	filter.Page = page
+	filter.PageSize = pageSize
+
+	countQuery, countArgs := buildNodeCountQuery(filter)
+	var total int
+	if err := repo.db.QueryRowContext(ctx, countQuery, countArgs...).Scan(&total); err != nil {
+		return nil, fmt.Errorf("count nodes: %w", err)
+	}
+
+	query, args := buildNodeListQuery(filter, false)
+	query += "ORDER BY n.id DESC\nLIMIT ? OFFSET ?"
+	args = append(args, pageSize, (page-1)*pageSize)
+
+	rows, err := repo.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list node page: %w", err)
+	}
+	defer rows.Close()
+
+	nodes, err := scanProxyNodes(rows)
+	if err != nil {
+		return nil, err
+	}
+	if err := repo.attachNodeGroupIDs(ctx, nodes); err != nil {
+		return nil, err
+	}
+	return &NodeListResult{Items: nodes, Total: total, Page: page, PageSize: pageSize}, nil
+}
+
+func (repo *NodeRepository) Summary(ctx context.Context) (*NodeSummary, error) {
+	row := repo.db.QueryRowContext(ctx, `
+SELECT COUNT(*),
+       COALESCE(SUM(CASE WHEN alive_status = 'alive' THEN 1 ELSE 0 END), 0),
+       COALESCE(SUM(CASE WHEN alive_status = 'dead' THEN 1 ELSE 0 END), 0),
+       COALESCE(SUM(CASE WHEN alive_status = 'unknown' THEN 1 ELSE 0 END), 0)
+FROM proxy_nodes
+`)
+	var summary NodeSummary
+	if err := row.Scan(&summary.Total, &summary.Alive, &summary.Dead, &summary.Unknown); err != nil {
+		return nil, fmt.Errorf("summarize nodes: %w", err)
+	}
+	return &summary, nil
+}
+
+func buildNodeListQuery(filter NodeListFilter, countOnly bool) (string, []any) {
+	selectClause := `
 SELECT n.id, n.subscription_id, n.subscription_node_key, n.name, n.protocol, n.server, n.port,
        n.raw_uri, n.raw_config_json, n.sing_box_outbound_json, n.sing_box_status,
        n.sing_box_error, n.sing_box_version, n.udp_supported, n.transport_type,
@@ -56,10 +140,13 @@ SELECT n.id, n.subscription_id, n.subscription_node_key, n.name, n.protocol, n.s
        n.last_seen_at, n.last_checked_at, n.latency_ms, n.fail_count, n.created_at, n.updated_at
 FROM proxy_nodes n
 `
+	if countOnly {
+		selectClause = "SELECT COUNT(*)\nFROM proxy_nodes n\n"
+	}
 	var conditions []string
 	var args []any
 	if filter.GroupID > 0 {
-		query += "JOIN proxy_node_groups ng ON ng.node_id = n.id\n"
+		selectClause += "JOIN proxy_node_groups ng ON ng.node_id = n.id\n"
 		conditions = append(conditions, "ng.group_id = ?")
 		args = append(args, filter.GroupID)
 	}
@@ -83,17 +170,26 @@ FROM proxy_nodes n
 		conditions = append(conditions, "n.enabled = ?")
 		args = append(args, boolToInt(*filter.Enabled))
 	}
+	if search := strings.TrimSpace(filter.Search); search != "" {
+		like := "%" + escapeLike(strings.ToLower(search)) + "%"
+		conditions = append(conditions, `(LOWER(n.name) LIKE ? ESCAPE '\' OR LOWER(n.server) LIKE ? ESCAPE '\' OR LOWER(n.protocol) LIKE ? ESCAPE '\')`)
+		args = append(args, like, like, like)
+	}
+	if regionConditions, regionArgs := buildRegionConditions(filter.Region); len(regionConditions) > 0 {
+		conditions = append(conditions, "("+strings.Join(regionConditions, " OR ")+")")
+		args = append(args, regionArgs...)
+	}
 	if len(conditions) > 0 {
-		query += "WHERE " + strings.Join(conditions, " AND ") + "\n"
+		selectClause += "WHERE " + strings.Join(conditions, " AND ") + "\n"
 	}
-	query += "ORDER BY n.id DESC"
+	return selectClause, args
+}
 
-	rows, err := repo.db.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("list nodes: %w", err)
-	}
-	defer rows.Close()
+func buildNodeCountQuery(filter NodeListFilter) (string, []any) {
+	return buildNodeListQuery(filter, true)
+}
 
+func scanProxyNodes(rows *sql.Rows) ([]model.ProxyNode, error) {
 	var nodes []model.ProxyNode
 	for rows.Next() {
 		node, err := scanProxyNode(rows)
@@ -105,10 +201,60 @@ FROM proxy_nodes n
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate nodes: %w", err)
 	}
-	if err := repo.attachNodeGroupIDs(ctx, nodes); err != nil {
-		return nil, err
-	}
 	return nodes, nil
+}
+
+func normalizePage(page int, pageSize int) (int, int) {
+	if page <= 0 {
+		page = 1
+	}
+	if pageSize <= 0 {
+		pageSize = 50
+	}
+	if pageSize > 200 {
+		pageSize = 200
+	}
+	return page, pageSize
+}
+
+func escapeLike(value string) string {
+	value = strings.ReplaceAll(value, `\`, `\\`)
+	value = strings.ReplaceAll(value, `%`, `\%`)
+	value = strings.ReplaceAll(value, `_`, `\_`)
+	return value
+}
+
+func buildRegionConditions(region string) ([]string, []any) {
+	keywords := regionKeywords(region)
+	conditions := make([]string, 0, len(keywords))
+	args := make([]any, 0, len(keywords))
+	for _, keyword := range keywords {
+		conditions = append(conditions, `LOWER(n.name) LIKE ? ESCAPE '\'`)
+		args = append(args, "%"+escapeLike(strings.ToLower(keyword))+"%")
+	}
+	return conditions, args
+}
+
+func regionKeywords(region string) []string {
+	switch strings.ToLower(strings.TrimSpace(region)) {
+	case "hk", "hongkong", "hong_kong":
+		return []string{"香港", "港", "hk", "hong kong", "hongkong"}
+	case "jp", "japan":
+		return []string{"日本", "日", "jp", "japan", "tokyo", "osaka"}
+	case "us", "usa", "united_states":
+		return []string{"美国", "美", "us", "usa", "united states", "los angeles", "new york"}
+	case "sg", "singapore":
+		return []string{"新加坡", "狮城", "sg", "singapore"}
+	case "tw", "taiwan":
+		return []string{"台湾", "台", "tw", "taiwan"}
+	case "kr", "korea":
+		return []string{"韩国", "韩", "kr", "korea", "seoul"}
+	default:
+		if strings.TrimSpace(region) == "" {
+			return nil
+		}
+		return []string{region}
+	}
 }
 
 func (repo *NodeRepository) listNodeGroupIDs(ctx context.Context, nodeID int64) ([]int64, error) {

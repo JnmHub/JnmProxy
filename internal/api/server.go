@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -30,6 +31,7 @@ type Server struct {
 	CredentialRepo         *repository.CredentialRepository
 	HealthRepo             *repository.HealthRepository
 	StatsRepo              *repository.StatsRepository
+	OperationLogRepo       *repository.OperationLogRepository
 	SubscriptionManager    *subscription.Manager
 	AuthService            *auth.Service
 	GroupingService        *grouping.Service
@@ -74,6 +76,8 @@ func (server *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		server.handleSubscriptions(w, r, segments)
 	case "nodes":
 		server.handleNodes(w, r, segments)
+	case "operation-logs":
+		server.handleOperationLogs(w, r, segments)
 	case "groups":
 		server.handleGroups(w, r, segments)
 	case "group-keywords":
@@ -141,6 +145,9 @@ func (server *Server) handleSubscriptions(w http.ResponseWriter, r *http.Request
 				Enabled:                enabled,
 			})
 			server.reloadCache(ctx)
+			if err == nil && item != nil {
+				server.recordOperation(ctx, r, "subscription.create", "subscription", item.ID, "创建订阅", map[string]any{"name": item.Name, "enabled": item.Enabled})
+			}
 			writeResult(w, item, err)
 		default:
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -170,10 +177,16 @@ func (server *Server) handleSubscriptions(w http.ResponseWriter, r *http.Request
 				Enabled:                input.Enabled,
 			})
 			server.reloadCache(ctx)
+			if err == nil && item != nil {
+				server.recordOperation(ctx, r, "subscription.update", "subscription", id, "更新订阅", map[string]any{"name": item.Name, "enabled": item.Enabled})
+			}
 			writeResult(w, item, err)
 		case http.MethodDelete:
 			err := server.SubscriptionRepo.Delete(ctx, id)
 			server.reloadCache(ctx)
+			if err == nil {
+				server.recordOperation(ctx, r, "subscription.delete", "subscription", id, "删除订阅", nil)
+			}
 			writeNoContent(w, err)
 		default:
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -189,6 +202,15 @@ func (server *Server) handleSubscriptions(w http.ResponseWriter, r *http.Request
 			}
 			result, err := server.SubscriptionManager.Refresh(ctx, id)
 			server.reloadCache(ctx)
+			if err == nil {
+				server.recordOperation(ctx, r, "subscription.refresh", "subscription", id, "刷新订阅", map[string]any{
+					"node_count":               result.NodeCount,
+					"http_status":              result.HTTPStatus,
+					"sing_box_supported_count": result.SingBoxSupportedCount,
+					"sing_box_error_count":     result.SingBoxErrorCount,
+					"unsupported_count":        result.UnsupportedCount,
+				})
+			}
 			writeResult(w, result, err)
 		case "refresh-logs":
 			if r.Method != http.MethodGet {
@@ -215,18 +237,24 @@ func (server *Server) handleSubscriptions(w http.ResponseWriter, r *http.Request
 func (server *Server) handleNodes(w http.ResponseWriter, r *http.Request, segments []string) {
 	ctx := r.Context()
 	if len(segments) == 1 && r.Method == http.MethodGet {
-		filter := repository.NodeListFilter{}
-		filter.SubscriptionID = queryInt64(r, "subscription_id")
-		filter.GroupID = queryInt64(r, "group_id")
-		filter.Protocol = r.URL.Query().Get("protocol")
-		filter.AliveStatus = r.URL.Query().Get("alive_status")
-		filter.SingBoxStatus = r.URL.Query().Get("sing_box_status")
-		if value := r.URL.Query().Get("enabled"); value != "" {
-			enabled := value == "1" || strings.EqualFold(value, "true")
-			filter.Enabled = &enabled
-		}
+		filter := nodeListFilterFromRequest(r)
 		nodes, err := server.NodeRepo.List(ctx, filter)
 		writeResult(w, nodes, err)
+		return
+	}
+	if len(segments) == 2 && segments[1] == "page" && r.Method == http.MethodGet {
+		filter := nodeListFilterFromRequest(r)
+		filter.Search = r.URL.Query().Get("search")
+		filter.Region = r.URL.Query().Get("region")
+		filter.Page = queryIntDefault(r, "page", 1)
+		filter.PageSize = queryIntDefault(r, "page_size", 50)
+		result, err := server.NodeRepo.ListPage(ctx, filter)
+		writeResult(w, result, err)
+		return
+	}
+	if len(segments) == 2 && segments[1] == "summary" && r.Method == http.MethodGet {
+		summary, err := server.NodeRepo.Summary(ctx)
+		writeResult(w, summary, err)
 		return
 	}
 	if len(segments) == 2 && segments[1] == "batch" && r.Method == http.MethodPost {
@@ -236,12 +264,18 @@ func (server *Server) handleNodes(w http.ResponseWriter, r *http.Request, segmen
 		}
 		err := server.handleNodeBatch(ctx, input)
 		server.reloadCache(ctx)
+		if err == nil {
+			server.recordOperation(ctx, r, "node.batch."+input.Action, "node", 0, "执行节点批量操作", map[string]any{"node_count": len(input.NodeIDs), "group_id": input.GroupID})
+		}
 		writeNoContent(w, err)
 		return
 	}
 	if len(segments) == 2 && segments[1] == "check" && r.Method == http.MethodPost {
 		count, err := server.checkAllNodes(ctx)
 		server.reloadCache(ctx)
+		if err == nil {
+			server.recordOperation(ctx, r, "node.check_all", "node", 0, "全部健康检查", map[string]any{"checked": count})
+		}
 		writeResult(w, map[string]any{"checked": count}, err)
 		return
 	}
@@ -269,6 +303,9 @@ func (server *Server) handleNodes(w http.ResponseWriter, r *http.Request, segmen
 				err = server.NodeRepo.SetEnabled(ctx, []int64{id}, *input.Enabled)
 			}
 			server.reloadCache(ctx)
+			if err == nil && input.Enabled != nil {
+				server.recordOperation(ctx, r, "node.set_enabled", "node", id, "修改节点启用状态", map[string]any{"enabled": *input.Enabled})
+			}
 			writeNoContent(w, err)
 		default:
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -278,12 +315,18 @@ func (server *Server) handleNodes(w http.ResponseWriter, r *http.Request, segmen
 	if len(segments) == 3 && segments[2] == "check" && r.Method == http.MethodPost {
 		err := server.checkNode(ctx, id)
 		server.reloadCache(ctx)
+		if err == nil {
+			server.recordOperation(ctx, r, "node.check", "node", id, "健康检查节点", nil)
+		}
 		writeNoContent(w, err)
 		return
 	}
 	if len(segments) == 3 && segments[2] == "rebuild-adapter" && r.Method == http.MethodPost {
 		result, err := server.rebuildNodeAdapter(ctx, id)
 		server.reloadCache(ctx)
+		if err == nil {
+			server.recordOperation(ctx, r, "node.rebuild_adapter", "node", id, "重建节点适配器", result)
+		}
 		writeResult(w, result, err)
 		return
 	}
@@ -303,6 +346,9 @@ func (server *Server) handleGroups(w http.ResponseWriter, r *http.Request, segme
 				return
 			}
 			group, err := server.GroupRepo.CreateGroup(ctx, repository.CreateGroupParams{Name: input.Name, Description: input.Description, AutoCreated: input.AutoCreated})
+			if err == nil && group != nil {
+				server.recordOperation(ctx, r, "group.create", "group", group.ID, "创建分组", map[string]any{"name": group.Name, "auto_created": group.AutoCreated})
+			}
 			writeResult(w, group, err)
 		default:
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -324,10 +370,16 @@ func (server *Server) handleGroups(w http.ResponseWriter, r *http.Request, segme
 				return
 			}
 			group, err := server.GroupRepo.UpdateGroup(ctx, id, repository.UpdateGroupParams{Name: input.Name, Description: input.Description, AutoCreated: input.AutoCreated})
+			if err == nil && group != nil {
+				server.recordOperation(ctx, r, "group.update", "group", id, "更新分组", map[string]any{"name": group.Name, "auto_created": group.AutoCreated})
+			}
 			writeResult(w, group, err)
 		case http.MethodDelete:
 			err := server.GroupRepo.DeleteGroup(ctx, id)
 			server.reloadCache(ctx)
+			if err == nil {
+				server.recordOperation(ctx, r, "group.delete", "group", id, "删除分组", nil)
+			}
 			writeNoContent(w, err)
 		default:
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -343,8 +395,14 @@ func (server *Server) handleGroups(w http.ResponseWriter, r *http.Request, segme
 		switch r.Method {
 		case http.MethodPost:
 			err = server.GroupRepo.AddNodesToGroup(ctx, id, input.NodeIDs)
+			if err == nil {
+				server.recordOperation(ctx, r, "group.add_nodes", "group", id, "分组加入节点", map[string]any{"node_count": len(input.NodeIDs)})
+			}
 		case http.MethodDelete:
 			err = server.GroupRepo.RemoveNodesFromGroup(ctx, id, input.NodeIDs)
+			if err == nil {
+				server.recordOperation(ctx, r, "group.remove_nodes", "group", id, "分组移出节点", map[string]any{"node_count": len(input.NodeIDs)})
+			}
 		default:
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
@@ -365,6 +423,16 @@ func (server *Server) handleGroupKeywords(w http.ResponseWriter, r *http.Request
 		}
 		result, err := server.GroupingService.ApplyKeywordGroups(ctx, grouping.ApplyKeywordParams{RuleIDs: input.RuleIDs, All: input.All})
 		server.reloadCache(ctx)
+		if err == nil {
+			server.recordOperation(ctx, r, "keyword.apply", "group_keyword", 0, "执行关键词分组", map[string]any{
+				"all":               input.All,
+				"rule_count":        len(input.RuleIDs),
+				"rules_scanned":     result.RulesScanned,
+				"nodes_scanned":     result.NodesScanned,
+				"groups_touched":    result.GroupsTouched,
+				"relations_touched": result.RelationsTouched,
+			})
+		}
 		writeResult(w, result, err)
 		return
 	}
@@ -385,6 +453,9 @@ func (server *Server) handleGroupKeywords(w http.ResponseWriter, r *http.Request
 			rule, err := server.GroupRepo.CreateKeywordRule(ctx, repository.CreateKeywordParams{
 				Name: input.Name, Keywords: input.Keywords, CaseSensitive: input.CaseSensitive, Enabled: enabled,
 			})
+			if err == nil && rule != nil {
+				server.recordOperation(ctx, r, "keyword.create", "group_keyword", rule.ID, "创建关键词规则", map[string]any{"name": rule.Name, "enabled": rule.Enabled})
+			}
 			writeResult(w, rule, err)
 		default:
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -404,9 +475,15 @@ func (server *Server) handleGroupKeywords(w http.ResponseWriter, r *http.Request
 		rule, err := server.GroupRepo.UpdateKeywordRule(ctx, id, repository.UpdateKeywordParams{
 			Name: input.Name, Keywords: input.Keywords, CaseSensitive: input.CaseSensitive, Enabled: input.Enabled,
 		})
+		if err == nil && rule != nil {
+			server.recordOperation(ctx, r, "keyword.update", "group_keyword", id, "更新关键词规则", map[string]any{"name": rule.Name, "enabled": rule.Enabled})
+		}
 		writeResult(w, rule, err)
 	case http.MethodDelete:
 		err := server.GroupRepo.DeleteKeywordRule(ctx, id)
+		if err == nil {
+			server.recordOperation(ctx, r, "keyword.delete", "group_keyword", id, "删除关键词规则", nil)
+		}
 		writeNoContent(w, err)
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -434,6 +511,15 @@ func (server *Server) handleCredentials(w http.ResponseWriter, r *http.Request, 
 				SelectionPolicy: input.SelectionPolicy, Remark: input.Remark, Bindings: input.Bindings,
 			})
 			server.reloadCache(ctx)
+			if err == nil && item != nil {
+				server.recordOperation(ctx, r, "credential.create", "credential", item.ID, "创建凭证", map[string]any{
+					"username":         item.Username,
+					"enabled":          item.Enabled,
+					"bind_mode":        item.BindMode,
+					"selection_policy": item.SelectionPolicy,
+					"binding_count":    len(input.Bindings),
+				})
+			}
 			server.writeCredentialResult(w, ctx, item, err)
 		default:
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -451,6 +537,9 @@ func (server *Server) handleCredentials(w http.ResponseWriter, r *http.Request, 
 		}
 		err := server.AuthService.ResetPassword(ctx, id, input.Password)
 		server.reloadCache(ctx)
+		if err == nil {
+			server.recordOperation(ctx, r, "credential.reset_password", "credential", id, "重置凭证密码", nil)
+		}
 		writeNoContent(w, err)
 		return
 	}
@@ -472,10 +561,26 @@ func (server *Server) handleCredentials(w http.ResponseWriter, r *http.Request, 
 			Remark: input.Remark, Bindings: input.Bindings,
 		})
 		server.reloadCache(ctx)
+		if err == nil && item != nil {
+			bindingCount := 0
+			if input.Bindings != nil {
+				bindingCount = len(*input.Bindings)
+			}
+			server.recordOperation(ctx, r, "credential.update", "credential", id, "更新凭证", map[string]any{
+				"username":         item.Username,
+				"enabled":          item.Enabled,
+				"bind_mode":        item.BindMode,
+				"selection_policy": item.SelectionPolicy,
+				"binding_count":    bindingCount,
+			})
+		}
 		server.writeCredentialResult(w, ctx, item, err)
 	case http.MethodDelete:
 		err := server.CredentialRepo.Delete(ctx, id)
 		server.reloadCache(ctx)
+		if err == nil {
+			server.recordOperation(ctx, r, "credential.delete", "credential", id, "删除凭证", nil)
+		}
 		writeNoContent(w, err)
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -492,6 +597,31 @@ func (server *Server) handleStats(w http.ResponseWriter, r *http.Request, segmen
 		return
 	}
 	writeError(w, http.StatusNotFound, "not found")
+}
+
+func (server *Server) handleOperationLogs(w http.ResponseWriter, r *http.Request, segments []string) {
+	if len(segments) != 1 || r.Method != http.MethodGet {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	if server.OperationLogRepo == nil {
+		writeResult(w, &repository.OperationLogListResult{
+			Items:    []model.OperationLog{},
+			Total:    0,
+			Page:     1,
+			PageSize: queryIntDefault(r, "page_size", 50),
+		}, nil)
+		return
+	}
+	filter := repository.OperationLogListFilter{
+		Action:     r.URL.Query().Get("action"),
+		TargetType: r.URL.Query().Get("target_type"),
+		Search:     r.URL.Query().Get("search"),
+		Page:       queryIntDefault(r, "page", 1),
+		PageSize:   queryIntDefault(r, "page_size", 50),
+	}
+	result, err := server.OperationLogRepo.List(r.Context(), filter)
+	writeResult(w, result, err)
 }
 
 type credentialResponse struct {
@@ -644,6 +774,47 @@ func (server *Server) reloadCache(ctx context.Context) {
 	}
 }
 
+func (server *Server) recordOperation(ctx context.Context, r *http.Request, action string, targetType string, targetID int64, message string, detail any) {
+	if server.OperationLogRepo == nil {
+		return
+	}
+	detailJSON := "{}"
+	if detail != nil {
+		if data, err := json.Marshal(detail); err == nil {
+			detailJSON = string(data)
+		}
+	}
+	_ = server.OperationLogRepo.Create(ctx, repository.CreateOperationLogParams{
+		Actor:      server.operationActor(),
+		Action:     action,
+		TargetType: targetType,
+		TargetID:   targetID,
+		Message:    message,
+		DetailJSON: detailJSON,
+		IP:         requestIP(r),
+		UserAgent:  r.UserAgent(),
+	})
+}
+
+func (server *Server) operationActor() string {
+	if server.AdminToken == "" {
+		return "local-admin"
+	}
+	return "admin-token"
+}
+
+func requestIP(r *http.Request) string {
+	if forwarded := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); forwarded != "" {
+		parts := strings.Split(forwarded, ",")
+		return strings.TrimSpace(parts[0])
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err == nil {
+		return host
+	}
+	return r.RemoteAddr
+}
+
 type subscriptionInput struct {
 	Name                   string `json:"name"`
 	URL                    string `json:"url"`
@@ -752,6 +923,32 @@ func queryInt64(r *http.Request, key string) int64 {
 	}
 	parsed, _ := strconv.ParseInt(value, 10, 64)
 	return parsed
+}
+
+func queryIntDefault(r *http.Request, key string, fallback int) int {
+	value := r.URL.Query().Get(key)
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func nodeListFilterFromRequest(r *http.Request) repository.NodeListFilter {
+	filter := repository.NodeListFilter{}
+	filter.SubscriptionID = queryInt64(r, "subscription_id")
+	filter.GroupID = queryInt64(r, "group_id")
+	filter.Protocol = r.URL.Query().Get("protocol")
+	filter.AliveStatus = r.URL.Query().Get("alive_status")
+	filter.SingBoxStatus = r.URL.Query().Get("sing_box_status")
+	if value := r.URL.Query().Get("enabled"); value != "" {
+		enabled := value == "1" || strings.EqualFold(value, "true")
+		filter.Enabled = &enabled
+	}
+	return filter
 }
 
 func decodeRequest(w http.ResponseWriter, r *http.Request, dst any) bool {

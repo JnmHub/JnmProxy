@@ -102,6 +102,20 @@ export interface ProxyNode {
   updated_at: string;
 }
 
+export interface ProxyNodePage {
+  items: ProxyNode[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface ProxyNodeSummary {
+  total: number;
+  alive: number;
+  dead: number;
+  unknown: number;
+}
+
 export interface ProxyGroup {
   id: number;
   name: string;
@@ -144,4 +158,24 @@ export interface TrafficOverview {
   failed_connections: number;
   upload_bytes: number;
   download_bytes: number;
+}
+
+export interface OperationLog {
+  id: number;
+  actor: string;
+  action: string;
+  target_type: string;
+  target_id: number;
+  message: string;
+  detail_json: string;
+  ip: string;
+  user_agent: string;
+  created_at: string;
+}
+
+export interface OperationLogPage {
+  items: OperationLog[];
+  total: number;
+  page: number;
+  page_size: number;
 }

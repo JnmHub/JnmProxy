@@ -225,6 +225,28 @@ ALTER TABLE subscription_refresh_logs ADD COLUMN sing_box_error_count INTEGER NO
 ALTER TABLE subscription_refresh_logs ADD COLUMN unsupported_count INTEGER NOT NULL DEFAULT 0;
 `,
 	},
+	{
+		version: 4,
+		name:    "operation_logs",
+		sql: `
+CREATE TABLE IF NOT EXISTS operation_logs (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	actor TEXT NOT NULL DEFAULT '',
+	action TEXT NOT NULL,
+	target_type TEXT NOT NULL DEFAULT '',
+	target_id INTEGER NOT NULL DEFAULT 0,
+	message TEXT NOT NULL DEFAULT '',
+	detail_json TEXT NOT NULL DEFAULT '{}',
+	ip TEXT NOT NULL DEFAULT '',
+	user_agent TEXT NOT NULL DEFAULT '',
+	created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_operation_logs_created ON operation_logs(created_at);
+CREATE INDEX IF NOT EXISTS idx_operation_logs_action_created ON operation_logs(action, created_at);
+CREATE INDEX IF NOT EXISTS idx_operation_logs_target_created ON operation_logs(target_type, target_id, created_at);
+`,
+	},
 }
 
 func Migrate(ctx context.Context, store *sql.DB) error {

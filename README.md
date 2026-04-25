@@ -71,6 +71,25 @@ npm run build
 
 当前 Go 程序内嵌托管的静态文件位于 `internal/webui/dist`。更新前端生产包后，需要把 `web/dist` 同步到 `internal/webui/dist`，再重新构建 Go 程序。
 
+一键打包前后端：
+
+```bash
+./scripts/build-release.sh
+```
+
+脚本会依次执行：
+
+- 构建 `web/dist`。
+- 同步到 `internal/webui/dist`。
+- 执行 `go test -tags "with_quic with_utls" ./...`。
+- 编译二进制到 `bin/jnmproxy`。
+
+可用环境变量覆盖默认值：
+
+```bash
+GO_TAGS="" OUTPUT=./bin/jnmproxy ./scripts/build-release.sh
+```
+
 ## API 示例
 
 新增订阅：
