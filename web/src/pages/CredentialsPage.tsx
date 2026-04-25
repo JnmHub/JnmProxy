@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { KeyRound, Plus, Trash2 } from 'lucide-react';
+import { Copy, KeyRound, Plus, Terminal, Trash2 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { createCredential, deleteCredential, listCredentials, resetCredentialPassword, updateCredential, type CredentialInput, type CredentialUpdateInput } from '../api/credentials';
 import { listGroups } from '../api/groups';
@@ -55,6 +55,8 @@ export function CredentialsPage() {
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
   const [newPassword, setNewPassword] = useState('');
   const [editForm, setEditForm] = useState<ScopeForm>(defaultEditForm);
+  const [createdCommand, setCreatedCommand] = useState('');
+  const [commandCredential, setCommandCredential] = useState<Credential | null>(null);
 
   const credentialsQuery = useQuery({ queryKey: ['credentials'], queryFn: listCredentials });
   const groupsQuery = useQuery({ queryKey: ['groups'], queryFn: listGroups });
@@ -66,7 +68,7 @@ export function CredentialsPage() {
   const invalidateCredentials = () => { void queryClient.invalidateQueries({ queryKey: ['credentials'] }); };
   const createMutation = useMutation({
     mutationFn: (input: CredentialInput) => createCredential(input),
-    onSuccess: () => { setOpen(false); setForm(defaultCreateForm); invalidateCredentials(); },
+    onSuccess: (_credential, input) => { setCreatedCommand(proxyCommand(input.username, input.password)); setOpen(false); setForm(defaultCreateForm); invalidateCredentials(); },
   });
   const updateMutation = useMutation({ mutationFn: ({ id, enabled }: { id: number; enabled: boolean }) => updateCredential(id, { enabled }), onSuccess: invalidateCredentials });
   const editMutation = useMutation({
@@ -130,14 +132,14 @@ export function CredentialsPage() {
     <div className="space-y-6">
       <div><p className="text-sm text-blue-300">Credentials</p><h1 className="mt-2 text-3xl font-semibold text-white">凭证管理</h1></div>
       <Card>
-        <CardHeader title="代理访问凭证" description="客户端使用 HTTP/SOCKS5 代理时必须携带这里创建的账号密码。" action={<Button variant="primary" onClick={openCreate}><Plus className="h-4 w-4" />创建凭证</Button>} />
+        <CardHeader title="代理访问凭证" description="客户端使用 HTTP/SOCKS5 代理时必须携带这里创建的账号密码。绑定范围现在直接显示目标名称。" action={<Button variant="primary" onClick={openCreate}><Plus className="h-4 w-4" />创建凭证</Button>} />
         {credentialsQuery.isLoading ? <LoadingState /> : (
           <DataTable columns={['用户名', '状态', '绑定', '策略', '备注', '时间', '操作']} empty={!credentialsQuery.data?.length}>
             {(credentialsQuery.data ?? []).map((credential) => (
               <tr key={credential.id}>
                 <td className="px-4 py-3 font-mono text-blue-200">{credential.username}</td>
                 <td className="px-4 py-3"><Badge value={credential.enabled ? 'supported' : 'unsupported'}>{credential.enabled ? '启用' : '禁用'}</Badge></td>
-                <td className="px-4 py-3"><Badge value={credential.bind_mode} /><div className="mt-1 text-xs text-slate-500">目标 {credential.bindings?.length ?? 0} 个</div></td>
+                <td className="px-4 py-3"><CredentialBindingSummary credential={credential} groupNames={groupNames} nodeNames={nodeNames} /></td>
                 <td className="px-4 py-3"><Badge value={credential.selection_policy} /></td>
                 <td className="px-4 py-3 text-slate-400">{credential.remark || '—'}</td>
                 <td className="px-4 py-3 text-xs text-slate-500">{formatTime(credential.updated_at)}</td>
@@ -145,6 +147,7 @@ export function CredentialsPage() {
                   <div className="flex flex-wrap gap-2">
                     <Button onClick={() => updateMutation.mutate({ id: credential.id, enabled: !credential.enabled })}>{credential.enabled ? '禁用' : '启用'}</Button>
                     <Button onClick={() => openEdit(credential)}>编辑</Button>
+                    <Button onClick={() => setCommandCredential(credential)}><Terminal className="h-4 w-4" />命令</Button>
                     <Button onClick={() => setResetID(credential.id)}><KeyRound className="h-4 w-4" />重置</Button>
                     <Button variant="danger" onClick={() => setConfirm({ title: '删除凭证', message: `确定删除凭证「${credential.username}」吗？客户端将无法继续使用该账号。`, danger: true, confirmText: '删除', onConfirm: () => deleteMutation.mutate(credential.id) })}><Trash2 className="h-4 w-4" />删除</Button>
                   </div>
@@ -189,8 +192,68 @@ export function CredentialsPage() {
       <Modal open={resetID > 0} title="重置密码" onClose={() => setResetID(0)} footer={<><Button variant="ghost" onClick={() => setResetID(0)}>取消</Button><Button variant="primary" disabled={!newPassword} onClick={() => resetMutation.mutate({ id: resetID, password: newPassword })}>确认重置</Button></>}>
         <Field label="新密码"><Input type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} /></Field>
       </Modal>
+      <CommandModal
+        open={Boolean(createdCommand)}
+        title="凭证创建成功"
+        command={createdCommand}
+        description="这是唯一一次能直接展示明文密码的测试命令，关闭后前端不会保存密码。"
+        onClose={() => setCreatedCommand('')}
+      />
+      <CommandModal
+        open={Boolean(commandCredential)}
+        title="测试命令"
+        command={commandCredential ? proxyCommand(commandCredential.username, '<填写密码>') : ''}
+        description="已有凭证不会返回旧密码明文，请把命令里的 <填写密码> 替换成你自己保存的密码。"
+        onClose={() => setCommandCredential(null)}
+      />
       <ConfirmDialog state={confirm} onClose={() => setConfirm(null)} />
     </div>
+  );
+}
+
+function CredentialBindingSummary({ credential, groupNames, nodeNames }: { credential: Credential; groupNames: Map<number, string>; nodeNames: Map<number, string> }) {
+  const bindings = credential.bindings ?? [];
+  if (credential.bind_mode === 'all') {
+    return (
+      <div>
+        <Badge value="all">全部节点</Badge>
+        <div className="mt-2 text-xs leading-5 text-slate-400">全部可用节点随机，使用洗牌袋尽量一轮不重复。</div>
+      </div>
+    );
+  }
+  if (credential.bind_mode === 'node') {
+    const node = bindings.find((binding) => binding.target_type === 'node');
+    return (
+      <div>
+        <Badge value="fixed">固定节点</Badge>
+        <div className="mt-2 text-xs leading-5 text-blue-200">{node ? nodeNames.get(node.target_id) ?? `节点 ${node.target_id}` : '未绑定节点'}</div>
+      </div>
+    );
+  }
+  const names = bindings
+    .filter((binding) => binding.target_type === 'group')
+    .map((binding) => groupNames.get(binding.target_id) ?? `分组 ${binding.target_id}`);
+  return (
+    <div>
+      <Badge value="group">分组随机</Badge>
+      <div className="mt-2 flex max-w-sm flex-wrap gap-1.5">
+        {names.length ? names.map((name) => <span key={name} className="rounded-full border border-blue-400/20 bg-blue-500/10 px-2 py-1 text-xs text-blue-100">{name}</span>) : <span className="text-xs text-slate-500">未绑定分组</span>}
+      </div>
+    </div>
+  );
+}
+
+function CommandModal({ open, title, command, description, onClose }: { open: boolean; title: string; command: string; description: string; onClose: () => void }) {
+  return (
+    <Modal open={open} title={title} onClose={onClose} footer={<><Button variant="ghost" onClick={onClose}>关闭</Button><Button variant="primary" disabled={!command} onClick={() => copyCommand(command)}><Copy className="h-4 w-4" />复制命令</Button></>}>
+      <div className="space-y-4">
+        <p className="text-sm leading-6 text-slate-400">{description}</p>
+        <div className="rounded-2xl border border-slate-800 bg-slate-950 p-4">
+          <div className="mb-3 flex items-center gap-2 text-sm text-slate-300"><Terminal className="h-4 w-4 text-blue-300" />SOCKS5 测试</div>
+          <code className="block overflow-x-auto whitespace-nowrap rounded-xl bg-slate-900 px-3 py-3 font-mono text-xs text-blue-100">{command || '—'}</code>
+        </div>
+      </div>
+    </Modal>
   );
 }
 
@@ -303,4 +366,15 @@ function uniqueBindings(bindings: CredentialBinding[]) {
     seen.add(key);
     return true;
   });
+}
+
+function proxyCommand(username: string, password: string) {
+  const safeUsername = encodeURIComponent(username);
+  const safePassword = password.startsWith('<') ? password : encodeURIComponent(password);
+  return `curl --proxy socks5h://${safeUsername}:${safePassword}@127.0.0.1:1080 https://httpbin.org/ip`;
+}
+
+function copyCommand(command: string) {
+  if (!command || !navigator.clipboard) return;
+  void navigator.clipboard.writeText(command);
 }
