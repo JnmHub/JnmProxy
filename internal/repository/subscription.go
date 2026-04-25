@@ -34,18 +34,21 @@ type UpdateSubscriptionParams struct {
 }
 
 type SubscriptionRefreshResult struct {
-	Status        string
-	HTTPStatus    *int64
-	NodeCount     int
-	Error         string
-	StartedAt     string
-	FinishedAt    string
-	LastRefreshAt string
-	NextRefreshAt string
-	UploadBytes   *int64
-	DownloadBytes *int64
-	TotalBytes    *int64
-	ExpireAt      string
+	Status                string
+	HTTPStatus            *int64
+	NodeCount             int
+	SingBoxSupportedCount int
+	SingBoxErrorCount     int
+	UnsupportedCount      int
+	Error                 string
+	StartedAt             string
+	FinishedAt            string
+	LastRefreshAt         string
+	NextRefreshAt         string
+	UploadBytes           *int64
+	DownloadBytes         *int64
+	TotalBytes            *int64
+	ExpireAt              string
 }
 
 type UpsertProxyNodeParams struct {
@@ -57,6 +60,12 @@ type UpsertProxyNodeParams struct {
 	Port                int
 	RawURI              string
 	RawConfigJSON       string
+	SingBoxOutboundJSON string
+	SingBoxStatus       string
+	SingBoxError        string
+	SingBoxVersion      string
+	UDPSupported        bool
+	TransportType       string
 	AdapterStatus       string
 	LastSeenAt          string
 }
@@ -211,9 +220,11 @@ WHERE id = ?
 
 	if _, err := tx.ExecContext(ctx, `
 INSERT INTO subscription_refresh_logs
-    (subscription_id, status, http_status, node_count, error, started_at, finished_at)
-VALUES (?, ?, ?, ?, ?, ?, ?)
+    (subscription_id, status, http_status, node_count, sing_box_supported_count,
+     sing_box_error_count, unsupported_count, error, started_at, finished_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `, subscriptionID, result.Status, nullableInt64(result.HTTPStatus), result.NodeCount,
+		result.SingBoxSupportedCount, result.SingBoxErrorCount, result.UnsupportedCount,
 		nullableString(result.Error), result.StartedAt, nullableString(result.FinishedAt)); err != nil {
 		return fmt.Errorf("insert subscription refresh log: %w", err)
 	}
@@ -238,8 +249,10 @@ func (repo *SubscriptionRepository) UpsertNodes(ctx context.Context, nodes []Ups
 	stmt, err := tx.PrepareContext(ctx, `
 INSERT INTO proxy_nodes
     (subscription_id, subscription_node_key, name, protocol, server, port, raw_uri,
-     raw_config_json, adapter_status, enabled, alive_status, last_seen_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'unknown', ?)
+     raw_config_json, sing_box_outbound_json, sing_box_status, sing_box_error,
+     sing_box_version, udp_supported, transport_type, adapter_status, enabled,
+     alive_status, last_seen_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'unknown', ?)
 ON CONFLICT(subscription_id, subscription_node_key) DO UPDATE SET
     name = excluded.name,
     protocol = excluded.protocol,
@@ -247,6 +260,12 @@ ON CONFLICT(subscription_id, subscription_node_key) DO UPDATE SET
     port = excluded.port,
     raw_uri = excluded.raw_uri,
     raw_config_json = excluded.raw_config_json,
+    sing_box_outbound_json = excluded.sing_box_outbound_json,
+    sing_box_status = excluded.sing_box_status,
+    sing_box_error = excluded.sing_box_error,
+    sing_box_version = excluded.sing_box_version,
+    udp_supported = excluded.udp_supported,
+    transport_type = excluded.transport_type,
     adapter_status = excluded.adapter_status,
     enabled = 1,
     alive_status = CASE WHEN proxy_nodes.alive_status = 'dead' THEN 'unknown' ELSE proxy_nodes.alive_status END,
@@ -259,9 +278,19 @@ ON CONFLICT(subscription_id, subscription_node_key) DO UPDATE SET
 	defer stmt.Close()
 
 	for _, node := range nodes {
+		singBoxStatus := node.SingBoxStatus
+		if singBoxStatus == "" {
+			singBoxStatus = "unsupported"
+		}
+		adapterStatus := node.AdapterStatus
+		if adapterStatus == "" {
+			adapterStatus = "unsupported"
+		}
 		if _, err := stmt.ExecContext(ctx, node.SubscriptionID, node.SubscriptionNodeKey, node.Name,
 			node.Protocol, node.Server, node.Port, nullableString(node.RawURI), node.RawConfigJSON,
-			node.AdapterStatus, nullableString(node.LastSeenAt)); err != nil {
+			node.SingBoxOutboundJSON, singBoxStatus, node.SingBoxError,
+			node.SingBoxVersion, boolToInt(node.UDPSupported), node.TransportType,
+			adapterStatus, nullableString(node.LastSeenAt)); err != nil {
 			return fmt.Errorf("upsert node %q: %w", node.Name, err)
 		}
 	}
@@ -333,7 +362,8 @@ ORDER BY id ASC
 
 func (repo *SubscriptionRepository) ListRefreshLogs(ctx context.Context, subscriptionID int64) ([]model.SubscriptionRefreshLog, error) {
 	rows, err := repo.db.QueryContext(ctx, `
-SELECT id, subscription_id, status, http_status, node_count, error, started_at, finished_at, created_at
+SELECT id, subscription_id, status, http_status, node_count, sing_box_supported_count,
+       sing_box_error_count, unsupported_count, error, started_at, finished_at, created_at
 FROM subscription_refresh_logs
 WHERE subscription_id = ?
 ORDER BY id DESC
@@ -424,7 +454,8 @@ func scanRefreshLog(row scanner) (*model.SubscriptionRefreshLog, error) {
 	var errorText, finishedAt sql.NullString
 
 	if err := row.Scan(&log.ID, &log.SubscriptionID, &log.Status, &httpStatus, &log.NodeCount,
-		&errorText, &log.StartedAt, &finishedAt, &log.CreatedAt); err != nil {
+		&log.SingBoxSupportedCount, &log.SingBoxErrorCount, &log.UnsupportedCount, &errorText,
+		&log.StartedAt, &finishedAt, &log.CreatedAt); err != nil {
 		return nil, fmt.Errorf("scan refresh log: %w", err)
 	}
 

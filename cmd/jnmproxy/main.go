@@ -68,13 +68,32 @@ func main() {
 	defer stop()
 
 	outboundDialer := outbound.NewDialer(30 * time.Second)
+	var singBoxBuilder subscription.SingBoxOutboundBuilder
+	var singBoxNodeInvalidator subscription.NodeInvalidator
 	if cfg.SingBox.Enabled {
-		outboundDialer.SingBox = singbox.NewAdapter(singbox.AdapterOptions{
+		singBoxAdapter := singbox.NewAdapter(singbox.AdapterOptions{
 			MaxActiveEngines: cfg.SingBox.MaxActiveEngines,
 			IdleTimeout:      time.Duration(cfg.SingBox.EngineIdleTimeoutSeconds) * time.Second,
 			DialTimeout:      time.Duration(cfg.SingBox.EngineDialTimeoutSeconds) * time.Second,
 			LogLevel:         cfg.SingBox.LogLevel,
 		})
+		outboundDialer.SingBox = singBoxAdapter
+		singBoxBuilder = func(node subscription.ParsedNode) subscription.SingBoxBuildResult {
+			result := singbox.BuildOutbound(0, node)
+			return subscription.SingBoxBuildResult{
+				JSON:          result.JSON,
+				Status:        result.Status,
+				Error:         result.Error,
+				Version:       singbox.Version,
+				TransportType: result.TransportType,
+				UDPSupported:  result.UDPSupported,
+			}
+		}
+		singBoxNodeInvalidator = func(nodeID int64) {
+			if err := singBoxAdapter.CloseNode(nodeID); err != nil {
+				logger.Warn("close sing-box node adapter failed", "node_id", nodeID, "error", err)
+			}
+		}
 	}
 	statsCollector := stats.NewCollector(time.Now)
 	subscriptionRepo := repository.NewSubscriptionRepository(store)
@@ -88,6 +107,8 @@ func main() {
 	subscriptionManager := subscription.NewManager(subscriptionRepo, subscription.ManagerOptions{
 		RequestTimeout:   time.Duration(cfg.Subscription.RequestTimeoutSeconds) * time.Second,
 		DefaultUserAgent: cfg.Subscription.DefaultUserAgent,
+		SingBoxBuilder:   singBoxBuilder,
+		NodeInvalidator:  singBoxNodeInvalidator,
 	})
 	backgroundScheduler := &scheduler.Scheduler{
 		DB:                  store,

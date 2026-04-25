@@ -54,6 +54,15 @@ func TestMigrateCreatesCoreTables(t *testing.T) {
 			t.Fatalf("expected proxy_nodes.%s to exist", column)
 		}
 	}
+	for _, column := range []string{
+		"sing_box_supported_count",
+		"sing_box_error_count",
+		"unsupported_count",
+	} {
+		if !columnExists(t, store, "subscription_refresh_logs", column) {
+			t.Fatalf("expected subscription_refresh_logs.%s to exist", column)
+		}
+	}
 }
 
 func TestOpenCreatesParentDirectory(t *testing.T) {
@@ -99,6 +108,9 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 	}
 	if !tableExists(t, store, "sing_box_engine_states") {
 		t.Fatal("expected legacy schema to be upgraded with sing_box_engine_states")
+	}
+	if !columnExists(t, store, "subscription_refresh_logs", "sing_box_supported_count") {
+		t.Fatal("expected legacy schema to be upgraded with refresh protocol stats")
 	}
 }
 

@@ -216,6 +216,15 @@ CREATE INDEX IF NOT EXISTS idx_nodes_sing_box_status ON proxy_nodes(sing_box_sta
 CREATE INDEX IF NOT EXISTS idx_engine_states_node ON sing_box_engine_states(node_id, status);
 `,
 	},
+	{
+		version: 3,
+		name:    "subscription_refresh_protocol_stats",
+		sql: `
+ALTER TABLE subscription_refresh_logs ADD COLUMN sing_box_supported_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE subscription_refresh_logs ADD COLUMN sing_box_error_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE subscription_refresh_logs ADD COLUMN unsupported_count INTEGER NOT NULL DEFAULT 0;
+`,
+	},
 }
 
 func Migrate(ctx context.Context, store *sql.DB) error {

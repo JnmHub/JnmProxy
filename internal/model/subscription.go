@@ -47,13 +47,16 @@ type ProxyNode struct {
 }
 
 type SubscriptionRefreshLog struct {
-	ID             int64  `json:"id"`
-	SubscriptionID int64  `json:"subscription_id"`
-	Status         string `json:"status"`
-	HTTPStatus     *int64 `json:"http_status,omitempty"`
-	NodeCount      int    `json:"node_count"`
-	Error          string `json:"error,omitempty"`
-	StartedAt      string `json:"started_at"`
-	FinishedAt     string `json:"finished_at,omitempty"`
-	CreatedAt      string `json:"created_at"`
+	ID                    int64  `json:"id"`
+	SubscriptionID        int64  `json:"subscription_id"`
+	Status                string `json:"status"`
+	HTTPStatus            *int64 `json:"http_status,omitempty"`
+	NodeCount             int    `json:"node_count"`
+	SingBoxSupportedCount int    `json:"sing_box_supported_count"`
+	SingBoxErrorCount     int    `json:"sing_box_error_count"`
+	UnsupportedCount      int    `json:"unsupported_count"`
+	Error                 string `json:"error,omitempty"`
+	StartedAt             string `json:"started_at"`
+	FinishedAt            string `json:"finished_at,omitempty"`
+	CreatedAt             string `json:"created_at"`
 }
