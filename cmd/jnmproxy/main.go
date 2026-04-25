@@ -21,6 +21,7 @@ import (
 	proxyserver "github.com/jnmproxy/jnmproxy/internal/proxy"
 	"github.com/jnmproxy/jnmproxy/internal/repository"
 	"github.com/jnmproxy/jnmproxy/internal/scheduler"
+	"github.com/jnmproxy/jnmproxy/internal/singbox"
 	"github.com/jnmproxy/jnmproxy/internal/stats"
 	"github.com/jnmproxy/jnmproxy/internal/subscription"
 )
@@ -67,6 +68,14 @@ func main() {
 	defer stop()
 
 	outboundDialer := outbound.NewDialer(30 * time.Second)
+	if cfg.SingBox.Enabled {
+		outboundDialer.SingBox = singbox.NewAdapter(singbox.AdapterOptions{
+			MaxActiveEngines: cfg.SingBox.MaxActiveEngines,
+			IdleTimeout:      time.Duration(cfg.SingBox.EngineIdleTimeoutSeconds) * time.Second,
+			DialTimeout:      time.Duration(cfg.SingBox.EngineDialTimeoutSeconds) * time.Second,
+			LogLevel:         cfg.SingBox.LogLevel,
+		})
+	}
 	statsCollector := stats.NewCollector(time.Now)
 	subscriptionRepo := repository.NewSubscriptionRepository(store)
 	nodeRepo := repository.NewNodeRepository(store)

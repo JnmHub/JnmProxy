@@ -21,6 +21,13 @@ import (
 
 type Dialer struct {
 	Timeout time.Duration
+	SingBox SingBoxDialer
+}
+
+type SingBoxDialer interface {
+	DialContext(ctx context.Context, node cache.NodeSnapshot, targetAddress string) (net.Conn, error)
+	Supports(protocol string) bool
+	CloseNode(nodeID int64) error
 }
 
 func NewDialer(timeout time.Duration) *Dialer {
@@ -37,6 +44,9 @@ func (dialer *Dialer) DialContext(ctx context.Context, node cache.NodeSnapshot, 
 	case "socks5", "socks":
 		return dialer.dialSOCKS5Proxy(ctx, node, targetAddress)
 	default:
+		if dialer.SingBox != nil && node.SingBoxStatus == "supported" && dialer.SingBox.Supports(node.Protocol) {
+			return dialer.SingBox.DialContext(ctx, node, targetAddress)
+		}
 		return nil, fmt.Errorf("unsupported outbound protocol %q", node.Protocol)
 	}
 }

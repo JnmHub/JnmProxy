@@ -34,14 +34,20 @@ type BindingSnapshot struct {
 }
 
 type NodeSnapshot struct {
-	ID             int64
-	SubscriptionID int64
-	Name           string
-	Protocol       string
-	Server         string
-	Port           int
-	RawConfigJSON  string
-	GroupIDs       []int64
+	ID                  int64
+	SubscriptionID      int64
+	Name                string
+	Protocol            string
+	Server              string
+	Port                int
+	RawConfigJSON       string
+	SingBoxOutboundJSON string
+	SingBoxStatus       model.SingBoxStatus
+	SingBoxError        string
+	SingBoxVersion      string
+	UDPSupported        bool
+	TransportType       string
+	GroupIDs            []int64
 }
 
 type Selection struct {
@@ -320,9 +326,11 @@ ORDER BY id ASC
 
 func loadNodes(ctx context.Context, db *sql.DB, store *Store) error {
 	rows, err := db.QueryContext(ctx, `
-SELECT id, subscription_id, name, protocol, server, port, raw_config_json
+SELECT id, subscription_id, name, protocol, server, port, raw_config_json,
+       sing_box_outbound_json, sing_box_status, sing_box_error, sing_box_version,
+       udp_supported, transport_type
 FROM proxy_nodes
-WHERE enabled = 1 AND adapter_status = 'supported' AND alive_status != 'dead'
+WHERE enabled = 1 AND (adapter_status = 'supported' OR sing_box_status = 'supported') AND alive_status != 'dead'
 ORDER BY id ASC
 `)
 	if err != nil {
@@ -332,9 +340,13 @@ ORDER BY id ASC
 
 	for rows.Next() {
 		var node NodeSnapshot
-		if err := rows.Scan(&node.ID, &node.SubscriptionID, &node.Name, &node.Protocol, &node.Server, &node.Port, &node.RawConfigJSON); err != nil {
+		var udpSupported int
+		if err := rows.Scan(&node.ID, &node.SubscriptionID, &node.Name, &node.Protocol, &node.Server, &node.Port,
+			&node.RawConfigJSON, &node.SingBoxOutboundJSON, &node.SingBoxStatus, &node.SingBoxError,
+			&node.SingBoxVersion, &udpSupported, &node.TransportType); err != nil {
 			return fmt.Errorf("scan node cache: %w", err)
 		}
+		node.UDPSupported = udpSupported != 0
 		store.nodesByID[node.ID] = node
 		store.allNodeIDs = append(store.allNodeIDs, node.ID)
 	}
