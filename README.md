@@ -15,7 +15,8 @@ JnmProxy 是一个 Go 后端代理池系统，基于机场订阅链接维护代�
 - HTTP 和 SOCKS5 入站代理强制用户名密码认证。
 - 原生出站适配支持 HTTP、HTTPS、SOCKS5 上游代理。
 - 已内嵌 `github.com/sagernet/sing-box v1.13.8` 作为 Go 依赖，不要求系统额外安装 sing-box 命令。
-- sing-box 出站适配支持 `ss`、`shadowsocks`、`vmess`、`vless`、`trojan`、`hysteria2`、`hy2`、`tuic`、`http`、`https`、`socks`、`socks5`、`socks5h` 的 TCP 转发链路。
+- sing-box 出站适配默认支持 `ss`、`shadowsocks`、`vmess`、`vless`、`trojan`、`http`、`https`、`socks`、`socks5`、`socks5h` 的 TCP 转发链路。
+- `hysteria2`、`hy2`、`tuic` 依赖 QUIC，构建或测试时需要增加 `-tags with_quic`。
 - 订阅刷新会为节点生成 `sing_box_outbound_json`、`sing_box_status`、`sing_box_error`、`sing_box_version`、`udp_supported`、`transport_type` 等适配字段。
 - 流量统计先写内存，再定时批量写入 SQLite。
 - 定时刷新订阅和节点健康检查已接入，健康检查可覆盖 sing-box 节点。
@@ -29,6 +30,13 @@ JnmProxy 是一个 Go 后端代理池系统，基于机场订阅链接维护代�
 go test ./...
 go run ./cmd/jnmproxy -migrate-only
 go run ./cmd/jnmproxy
+```
+
+如果需要 Hysteria2/TUIC：
+
+```bash
+go test -tags with_quic ./internal/singbox -run TestQUICProtocolTCPTransfers -count=1 -v
+go run -tags with_quic ./cmd/jnmproxy
 ```
 
 默认监听：
@@ -95,6 +103,7 @@ curl --proxy socks5h://15376259491:00hhg5210@127.0.0.1:1080 https://example.com
 - 不保存订阅规则、分流规则和策略组规则。
 - 未支持的节点协议会入库，但默认不参与代理调度。
 - 当前 MVP 以 TCP 代理为主，SOCKS5 UDP ASSOCIATE、透明代理、TUN 和系统路由不在本阶段范围内。
+- QUIC 协议族节点只有在 `with_quic` 构建标签启用时才进入 sing-box 支持状态，否则会记录 `sing_box_status=error` 并提示重新构建。
 - API 当前建议只监听本地地址，后续前端阶段再补管理端鉴权。
 
 ## sing-box 故障排查

@@ -53,6 +53,12 @@ func TestBuildOutboundForCoreProtocols(t *testing.T) {
 				t.Fatalf("parse uri: %v", err)
 			}
 			result := BuildOutbound(int64(index+1), node)
+			if requiresQUIC(normalizeProtocol(node.Protocol)) && !QUICEnabled() {
+				if result.Status != "error" {
+					t.Fatalf("expected QUIC protocol to require with_quic, got %#v", result)
+				}
+				return
+			}
 			if result.Status != "supported" {
 				t.Fatalf("expected supported result, got %#v", result)
 			}

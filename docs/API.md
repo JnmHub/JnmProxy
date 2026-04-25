@@ -39,6 +39,7 @@ API 前缀：`/api/v1`
   "engine_dial_timeout_seconds": 30,
   "health_check_target": "www.gstatic.com:443",
   "enable_udp": false,
+  "quic_enabled": true,
   "supported_protocols": ["ss", "vmess", "vless", "trojan", "hysteria2", "tuic"],
   "license": "GPL via github.com/sagernet/sing-box"
 }
@@ -288,14 +289,19 @@ MVP 第一批 TCP 出站支持：
 - `vmess`
 - `vless`
 - `trojan`
-- `hysteria2`
-- `hy2`
-- `tuic`
 - `http`
 - `https`
 - `socks`
 - `socks5`
 - `socks5h`
+
+启用 `-tags with_quic` 构建后额外支持：
+
+- `hysteria2`
+- `hy2`
+- `tuic`
+
+未启用 `with_quic` 时，Hysteria2/TUIC 节点会保留在数据库中，但转换结果为 `sing_box_status=error`，不会进入调度。
 
 当前不开放 sing-box 原生管理接口，不导入机场规则、分流规则和策略组规则。HTTP/SOCKS5 入站认证、节点调度、健康检查和流量统计仍由 JnmProxy 控制。
 

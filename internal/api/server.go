@@ -49,6 +49,7 @@ type SingBoxStatus struct {
 	EngineDialTimeoutSeconds int      `json:"engine_dial_timeout_seconds"`
 	HealthCheckTarget        string   `json:"health_check_target,omitempty"`
 	EnableUDP                bool     `json:"enable_udp"`
+	QUICEnabled              bool     `json:"quic_enabled"`
 	SupportedProtocols       []string `json:"supported_protocols"`
 	License                  string   `json:"license"`
 }
@@ -542,7 +543,7 @@ func (server *Server) currentSingBoxStatus() SingBoxStatus {
 }
 
 func defaultSingBoxSupportedProtocols() []string {
-	return []string{"ss", "shadowsocks", "vmess", "vless", "trojan", "hysteria2", "hy2", "tuic", "http", "https", "socks", "socks5", "socks5h"}
+	return []string{"ss", "shadowsocks", "vmess", "vless", "trojan", "http", "https", "socks", "socks5", "socks5h"}
 }
 
 func (server *Server) reloadCache(ctx context.Context) {

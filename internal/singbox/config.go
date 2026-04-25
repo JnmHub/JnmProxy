@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/jnmproxy/jnmproxy/internal/subscription"
+	C "github.com/sagernet/sing-box/constant"
 )
 
 const Version = "v1.13.8"
@@ -46,6 +47,9 @@ func BuildOutbound(nodeID int64, node subscription.ParsedNode) OutboundBuildResu
 
 func buildOutboundMap(nodeID int64, node subscription.ParsedNode) (map[string]any, string, bool, error) {
 	protocol := normalizeProtocol(node.Protocol)
+	if requiresQUIC(protocol) && !QUICEnabled() {
+		return nil, "", false, errors.New("sing-box QUIC support is not included; rebuild with -tags with_quic")
+	}
 	base := map[string]any{
 		"type":        protocol,
 		"tag":         fmt.Sprintf("node-%d", nodeID),
@@ -172,6 +176,27 @@ func buildOutboundMap(nodeID int64, node subscription.ParsedNode) (map[string]an
 	}
 
 	return base, transportType, defaultUDPSupport(protocol, raw, query), nil
+}
+
+func QUICEnabled() bool {
+	return C.WithQUIC
+}
+
+func SupportedProtocols() []string {
+	protocols := []string{"ss", "shadowsocks", "vmess", "vless", "trojan", "http", "https", "socks", "socks5", "socks5h"}
+	if QUICEnabled() {
+		protocols = append(protocols, "hysteria2", "hy2", "tuic")
+	}
+	return protocols
+}
+
+func requiresQUIC(protocol string) bool {
+	switch protocol {
+	case "hysteria", "hysteria2", "tuic":
+		return true
+	default:
+		return false
+	}
 }
 
 func rawConfig(node subscription.ParsedNode) map[string]any {

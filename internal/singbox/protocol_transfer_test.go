@@ -193,10 +193,132 @@ func TestQUICProtocolOutboundConfigsRemainValid(t *testing.T) {
 	}
 	for index, node := range nodes {
 		result := BuildOutbound(int64(index+100), node)
+		if !QUICEnabled() {
+			if result.Status != "error" {
+				t.Fatalf("expected QUIC config to require with_quic for %s: %#v", node.Protocol, result)
+			}
+			continue
+		}
 		if result.Status != "supported" {
 			t.Fatalf("build outbound for %s: %#v", node.Protocol, result)
 		}
 		assertValidOutboundJSON(t, result.JSON)
+	}
+}
+
+func TestQUICProtocolTCPTransfers(t *testing.T) {
+	if !QUICEnabled() {
+		t.Skip("QUIC protocol transfer requires go test -tags with_quic")
+	}
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("through-" + r.URL.Query().Get("case")))
+	}))
+	defer target.Close()
+	targetURL, err := url.Parse(target.URL)
+	if err != nil {
+		t.Fatalf("parse target url: %v", err)
+	}
+
+	cases := []struct {
+		name         string
+		inbound      map[string]any
+		node         subscription.ParsedNode
+		expectedBody string
+	}{
+		{
+			name: "hysteria2",
+			inbound: map[string]any{
+				"type": "hysteria2",
+				"users": []map[string]any{
+					{"password": "hy-pass"},
+				},
+				"tls": selfSignedInboundTLS(t),
+			},
+			node: subscription.ParsedNode{
+				Name:     "hy2",
+				Protocol: "hysteria2",
+				RawConfig: map[string]any{
+					"password":         "hy-pass",
+					"sni":              "localhost",
+					"skip-cert-verify": true,
+				},
+			},
+			expectedBody: "through-hysteria2",
+		},
+		{
+			name: "tuic",
+			inbound: map[string]any{
+				"type":               "tuic",
+				"congestion_control": "bbr",
+				"users": []map[string]any{
+					{"uuid": "00000000-0000-0000-0000-000000000003", "password": "tuic-pass"},
+				},
+				"tls": selfSignedInboundTLS(t),
+			},
+			node: subscription.ParsedNode{
+				Name:     "tuic",
+				Protocol: "tuic",
+				RawConfig: map[string]any{
+					"uuid":               "00000000-0000-0000-0000-000000000003",
+					"password":           "tuic-pass",
+					"sni":                "localhost",
+					"skip-cert-verify":   true,
+					"congestion_control": "bbr",
+				},
+			},
+			expectedBody: "through-tuic",
+		},
+	}
+
+	for index, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			port := freeUDPPort(t)
+			instance := startProtocolServer(t, port, tc.inbound)
+			defer instance.Close()
+
+			tc.node.Server = "127.0.0.1"
+			tc.node.Port = port
+			result := BuildOutbound(int64(index+200), tc.node)
+			if result.Status != "supported" {
+				t.Fatalf("build outbound: %#v", result)
+			}
+			adapter := NewAdapter(AdapterOptions{
+				MaxActiveEngines: 2,
+				IdleTimeout:      time.Minute,
+				DialTimeout:      10 * time.Second,
+				LogLevel:         "disabled",
+			})
+			defer adapter.Close()
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			conn, err := adapter.DialContext(ctx, cache.NodeSnapshot{
+				ID:                  int64(index + 200),
+				Protocol:            tc.node.Protocol,
+				SingBoxStatus:       model.SingBoxStatusSupported,
+				SingBoxOutboundJSON: result.JSON,
+			}, targetURL.Host)
+			if err != nil {
+				t.Fatalf("dial via protocol: %v", err)
+			}
+			defer conn.Close()
+
+			path := "/?case=" + url.QueryEscape(tc.name)
+			if _, err := fmt.Fprintf(conn, "GET %s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n", path, targetURL.Host); err != nil {
+				t.Fatalf("write request: %v", err)
+			}
+			resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+			if err != nil {
+				t.Fatalf("read response: %v", err)
+			}
+			defer resp.Body.Close()
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				t.Fatalf("read body: %v", err)
+			}
+			if string(body) != tc.expectedBody {
+				t.Fatalf("expected %q, got %q", tc.expectedBody, string(body))
+			}
+		})
 	}
 }
 
@@ -275,4 +397,14 @@ func freeTCPPort(t *testing.T) int {
 	}
 	defer listener.Close()
 	return listener.Addr().(*net.TCPAddr).Port
+}
+
+func freeUDPPort(t *testing.T) int {
+	t.Helper()
+	packetConn, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen free udp port: %v", err)
+	}
+	defer packetConn.Close()
+	return packetConn.LocalAddr().(*net.UDPAddr).Port
 }
