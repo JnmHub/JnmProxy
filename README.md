@@ -48,6 +48,27 @@ go run -tags with_quic ./cmd/jnmproxy
 
 可复制 `config.example.yaml` 为 `config.yaml` 后调整配置。
 
+## 前端开发
+
+前端是 `web/` 目录下的 React + TypeScript + Vite 单页管理后台。
+
+开发启动：
+
+```bash
+cd web
+npm install
+npm run dev
+```
+
+默认前端开发服务监听 `127.0.0.1:5173`，并把 `/api` 代理到后端 `127.0.0.1:8080`。
+
+生产构建：
+
+```bash
+cd web
+npm run build
+```
+
 ## API 示例
 
 新增订阅：
