@@ -6,6 +6,7 @@ import { GroupsPage } from '../pages/GroupsPage';
 import { KeywordGroupsPage } from '../pages/KeywordGroupsPage';
 import { NodesPage } from '../pages/NodesPage';
 import { OperationLogsPage } from '../pages/OperationLogsPage';
+import { ProxyRequestLogsPage } from '../pages/ProxyRequestLogsPage';
 import { SettingsPage } from '../pages/SettingsPage';
 import { StatsPage } from '../pages/StatsPage';
 import { SubscriptionDetailPage } from '../pages/SubscriptionDetailPage';
@@ -26,6 +27,7 @@ export function App() {
         <Route path="credentials" element={<CredentialsPage />} />
         <Route path="stats" element={<StatsPage />} />
         <Route path="operation-logs" element={<OperationLogsPage />} />
+        <Route path="proxy-request-logs" element={<ProxyRequestLogsPage />} />
         <Route path="system" element={<SystemPage />} />
         <Route path="settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />

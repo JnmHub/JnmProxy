@@ -172,6 +172,26 @@ proxies:
 	if len(logItems) == 0 {
 		t.Fatalf("expected operation log items: %#v", operationLogs)
 	}
+
+	if err := handler.ProxyRequestLogRepo.Create(ctx, repository.CreateProxyRequestLogParams{
+		EntryProtocol:    "SOCKS5",
+		CredentialID:     1,
+		Username:         "user",
+		TargetAddress:    "example.com:443",
+		Status:           "failed",
+		AttemptCount:     1,
+		SelectedNodeID:   nodeID,
+		SelectedNodeName: "香港 HK 01",
+		Error:            "dial failed",
+		AttemptsJSON:     `[{"node_id":1,"node_name":"香港 HK 01","success":false,"error":"dial failed"}]`,
+		DurationMS:       12,
+	}); err != nil {
+		t.Fatalf("create proxy request log: %v", err)
+	}
+	proxyLogs := getJSON(t, handler, "/api/v1/proxy-request-logs?search=example&entry_protocol=SOCKS5&page_size=10").(map[string]any)
+	if proxyLogs["total"].(float64) != 1 {
+		t.Fatalf("expected proxy request log to be listed: %#v", proxyLogs)
+	}
 }
 
 func TestAdminTokenProtectsAPI(t *testing.T) {
@@ -211,6 +231,7 @@ func newTestServer(t *testing.T, store *sql.DB) *Server {
 		HealthRepo:          repository.NewHealthRepository(store),
 		StatsRepo:           repository.NewStatsRepository(store),
 		OperationLogRepo:    repository.NewOperationLogRepository(store),
+		ProxyRequestLogRepo: repository.NewProxyRequestLogRepository(store),
 		SearchRepo:          repository.NewSearchRepository(store),
 		SubscriptionManager: subscription.NewManager(subRepo, subscription.ManagerOptions{RequestTimeout: 2 * time.Second}),
 		AuthService:         auth.NewService(credentialRepo),

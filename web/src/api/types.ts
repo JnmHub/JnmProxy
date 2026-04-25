@@ -190,6 +190,29 @@ export interface OperationLogPage {
   page_size: number;
 }
 
+export interface ProxyRequestLog {
+  id: number;
+  entry_protocol: string;
+  credential_id: number;
+  username: string;
+  target_address: string;
+  status: string;
+  attempt_count: number;
+  selected_node_id: number;
+  selected_node_name: string;
+  error: string;
+  attempts_json: string;
+  duration_ms: number;
+  created_at: string;
+}
+
+export interface ProxyRequestLogPage {
+  items: ProxyRequestLog[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
 export interface SearchItem {
   type: 'node' | 'subscription' | 'group' | 'credential' | 'operation_log' | string;
   id: number;

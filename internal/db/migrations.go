@@ -247,6 +247,32 @@ CREATE INDEX IF NOT EXISTS idx_operation_logs_action_created ON operation_logs(a
 CREATE INDEX IF NOT EXISTS idx_operation_logs_target_created ON operation_logs(target_type, target_id, created_at);
 `,
 	},
+	{
+		version: 5,
+		name:    "proxy_request_logs",
+		sql: `
+CREATE TABLE IF NOT EXISTS proxy_request_logs (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	entry_protocol TEXT NOT NULL DEFAULT '',
+	credential_id INTEGER NOT NULL DEFAULT 0,
+	username TEXT NOT NULL DEFAULT '',
+	target_address TEXT NOT NULL DEFAULT '',
+	status TEXT NOT NULL DEFAULT 'failed',
+	attempt_count INTEGER NOT NULL DEFAULT 0,
+	selected_node_id INTEGER NOT NULL DEFAULT 0,
+	selected_node_name TEXT NOT NULL DEFAULT '',
+	error TEXT NOT NULL DEFAULT '',
+	attempts_json TEXT NOT NULL DEFAULT '[]',
+	duration_ms INTEGER NOT NULL DEFAULT 0,
+	created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_proxy_request_logs_created ON proxy_request_logs(created_at);
+CREATE INDEX IF NOT EXISTS idx_proxy_request_logs_status_created ON proxy_request_logs(status, created_at);
+CREATE INDEX IF NOT EXISTS idx_proxy_request_logs_protocol_created ON proxy_request_logs(entry_protocol, created_at);
+CREATE INDEX IF NOT EXISTS idx_proxy_request_logs_credential_created ON proxy_request_logs(credential_id, created_at);
+`,
+	},
 }
 
 func Migrate(ctx context.Context, store *sql.DB) error {

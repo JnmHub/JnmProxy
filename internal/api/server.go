@@ -32,6 +32,7 @@ type Server struct {
 	HealthRepo             *repository.HealthRepository
 	StatsRepo              *repository.StatsRepository
 	OperationLogRepo       *repository.OperationLogRepository
+	ProxyRequestLogRepo    *repository.ProxyRequestLogRepository
 	SearchRepo             *repository.SearchRepository
 	SubscriptionManager    *subscription.Manager
 	AuthService            *auth.Service
@@ -79,6 +80,8 @@ func (server *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		server.handleNodes(w, r, segments)
 	case "operation-logs":
 		server.handleOperationLogs(w, r, segments)
+	case "proxy-request-logs":
+		server.handleProxyRequestLogs(w, r, segments)
 	case "search":
 		server.handleSearch(w, r, segments)
 	case "runtime":
@@ -626,6 +629,31 @@ func (server *Server) handleOperationLogs(w http.ResponseWriter, r *http.Request
 		PageSize:   queryIntDefault(r, "page_size", 50),
 	}
 	result, err := server.OperationLogRepo.List(r.Context(), filter)
+	writeResult(w, result, err)
+}
+
+func (server *Server) handleProxyRequestLogs(w http.ResponseWriter, r *http.Request, segments []string) {
+	if len(segments) != 1 || r.Method != http.MethodGet {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	if server.ProxyRequestLogRepo == nil {
+		writeResult(w, &repository.ProxyRequestLogListResult{
+			Items:    []model.ProxyRequestLog{},
+			Total:    0,
+			Page:     1,
+			PageSize: queryIntDefault(r, "page_size", 50),
+		}, nil)
+		return
+	}
+	filter := repository.ProxyRequestLogListFilter{
+		Search:        r.URL.Query().Get("search"),
+		Status:        r.URL.Query().Get("status"),
+		EntryProtocol: r.URL.Query().Get("entry_protocol"),
+		Page:          queryIntDefault(r, "page", 1),
+		PageSize:      queryIntDefault(r, "page_size", 50),
+	}
+	result, err := server.ProxyRequestLogRepo.List(r.Context(), filter)
 	writeResult(w, result, err)
 }
 

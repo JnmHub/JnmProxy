@@ -37,6 +37,7 @@ func TestMigrateCreatesCoreTables(t *testing.T) {
 		"system_settings",
 		"sing_box_engine_states",
 		"operation_logs",
+		"proxy_request_logs",
 	} {
 		if !tableExists(t, store, table) {
 			t.Fatalf("expected table %s to exist", table)
@@ -115,6 +116,9 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 	}
 	if !tableExists(t, store, "operation_logs") {
 		t.Fatal("expected legacy schema to be upgraded with operation_logs")
+	}
+	if !tableExists(t, store, "proxy_request_logs") {
+		t.Fatal("expected legacy schema to be upgraded with proxy_request_logs")
 	}
 }
 

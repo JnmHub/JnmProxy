@@ -32,6 +32,7 @@ func (repo *SearchRepository) Search(ctx context.Context, query string) (*model.
 		repo.searchGroups,
 		repo.searchCredentials,
 		repo.searchOperationLogs,
+		repo.searchProxyRequestLogs,
 	}
 	for _, searcher := range searchers {
 		items, err := searcher(ctx, query, like)
@@ -41,6 +42,43 @@ func (repo *SearchRepository) Search(ctx context.Context, query string) (*model.
 		result.Items = append(result.Items, items...)
 	}
 	return result, nil
+}
+
+func (repo *SearchRepository) searchProxyRequestLogs(ctx context.Context, query string, like string) ([]model.SearchItem, error) {
+	rows, err := repo.db.QueryContext(ctx, `
+SELECT id, entry_protocol, username, target_address, error
+FROM proxy_request_logs
+WHERE LOWER(username) LIKE ? ESCAPE '\' OR LOWER(target_address) LIKE ? ESCAPE '\' OR LOWER(selected_node_name) LIKE ? ESCAPE '\' OR LOWER(error) LIKE ? ESCAPE '\'
+ORDER BY id DESC
+LIMIT 5
+`, like, like, like, like)
+	if err != nil {
+		return nil, fmt.Errorf("search proxy request logs: %w", err)
+	}
+	defer rows.Close()
+
+	var items []model.SearchItem
+	for rows.Next() {
+		var id int64
+		var entryProtocol, username, targetAddress, message string
+		if err := rows.Scan(&id, &entryProtocol, &username, &targetAddress, &message); err != nil {
+			return nil, fmt.Errorf("scan proxy request log search item: %w", err)
+		}
+		if message == "" {
+			message = targetAddress
+		}
+		items = append(items, model.SearchItem{
+			Type:     "proxy_request_log",
+			ID:       id,
+			Title:    targetAddress,
+			Subtitle: fmt.Sprintf("请求日志 / %s / %s / %s", entryProtocol, username, message),
+			URL:      "/proxy-request-logs?search=" + url.QueryEscape(query),
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate proxy request log search: %w", err)
+	}
+	return items, nil
 }
 
 func (repo *SearchRepository) searchNodes(ctx context.Context, query string, like string) ([]model.SearchItem, error) {

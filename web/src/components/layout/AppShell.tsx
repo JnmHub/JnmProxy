@@ -1,4 +1,4 @@
-import { Activity, BarChart3, Command, FileText, FolderKanban, Gauge, KeyRound, Loader2, Menu, Network, Rss, Search, ServerCog, Settings, Tags, X } from 'lucide-react';
+import { Activity, AlertTriangle, BarChart3, Command, FileText, FolderKanban, Gauge, KeyRound, Loader2, Menu, Network, Rss, Search, ServerCog, Settings, Tags, X } from 'lucide-react';
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
@@ -17,6 +17,7 @@ const navItems = [
   { to: '/credentials', label: '凭证管理', icon: KeyRound },
   { to: '/stats', label: '流量统计', icon: BarChart3 },
   { to: '/operation-logs', label: '操作日志', icon: FileText },
+  { to: '/proxy-request-logs', label: '请求日志', icon: AlertTriangle },
   { to: '/system', label: '系统状态', icon: ServerCog },
   { to: '/settings', label: '设置', icon: Settings },
 ];

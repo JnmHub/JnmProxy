@@ -20,6 +20,7 @@ type SOCKS5Server struct {
 	Dialer                *outbound.Dialer
 	Stats                 *stats.Collector
 	MaxAttemptsPerRequest int
+	RequestLogger         *RequestLogger
 }
 
 func NewSOCKS5Server(store *cache.Store, dialer *outbound.Dialer) *SOCKS5Server {
@@ -54,6 +55,8 @@ func (server *SOCKS5Server) handleConn(conn net.Conn) {
 	if _, err := conn.Write([]byte{0x01, 0x00}); err != nil {
 		return
 	}
+	startedAt := time.Now()
+	credential, _ := server.Cache.Credential(username)
 
 	targetAddress, err := readSOCKS5ConnectRequest(conn)
 	if err != nil {
@@ -63,8 +66,9 @@ func (server *SOCKS5Server) handleConn(conn net.Conn) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	selection, outConn, err := server.dialWithRetries(ctx, username, targetAddress)
+	selection, outConn, attempts, err := server.dialWithRetries(ctx, username, targetAddress)
 	if err != nil {
+		server.recordRequestLog(username, credential.ID, targetAddress, "failed", cache.Selection{}, attempts, err, startedAt)
 		_ = writeSOCKS5Reply(conn, 0x05)
 		return
 	}
@@ -74,6 +78,7 @@ func (server *SOCKS5Server) handleConn(conn net.Conn) {
 	if err := writeSOCKS5Reply(conn, 0x00); err != nil {
 		server.Cache.ReportNodeFailure(selection.Node.ID, err.Error())
 		recordStats(server.Stats, selection, 0, 0, false)
+		server.recordRequestLog(username, credential.ID, targetAddress, "failed", selection, markLastAttemptFailed(attempts, selection.Node.ID, err), err, startedAt)
 		return
 	}
 	uploadBytes, downloadBytes := pipeConnections(conn, outConn)
@@ -81,8 +86,9 @@ func (server *SOCKS5Server) handleConn(conn net.Conn) {
 	recordStats(server.Stats, selection, uploadBytes, downloadBytes, true)
 }
 
-func (server *SOCKS5Server) dialWithRetries(ctx context.Context, username string, targetAddress string) (cache.Selection, net.Conn, error) {
+func (server *SOCKS5Server) dialWithRetries(ctx context.Context, username string, targetAddress string) (cache.Selection, net.Conn, []RequestAttempt, error) {
 	excluded := make(map[int64]struct{})
+	attempts := make([]RequestAttempt, 0, normalizeMaxAttempts(server.MaxAttemptsPerRequest))
 	var lastErr error
 	for attempt := 0; attempt < normalizeMaxAttempts(server.MaxAttemptsPerRequest); attempt++ {
 		selection, err := server.Cache.SelectExcluding(username, excluded)
@@ -93,16 +99,41 @@ func (server *SOCKS5Server) dialWithRetries(ctx context.Context, username string
 		excluded[selection.Node.ID] = struct{}{}
 		outConn, err := server.Dialer.DialContext(ctx, selection.Node, targetAddress)
 		if err == nil {
-			return selection, outConn, nil
+			attempts = append(attempts, RequestAttempt{NodeID: selection.Node.ID, NodeName: selection.Node.Name, Success: true})
+			return selection, outConn, attempts, nil
 		}
 		lastErr = err
+		attempts = append(attempts, RequestAttempt{NodeID: selection.Node.ID, NodeName: selection.Node.Name, Success: false, Error: err.Error()})
 		server.Cache.ReportNodeFailure(selection.Node.ID, err.Error())
 		recordStats(server.Stats, selection, 0, 0, false)
 	}
 	if lastErr == nil {
 		lastErr = cache.ErrNoCandidateNodes
 	}
-	return cache.Selection{}, nil, lastErr
+	return cache.Selection{}, nil, attempts, lastErr
+}
+
+func (server *SOCKS5Server) recordRequestLog(username string, credentialID int64, targetAddress string, status string, selection cache.Selection, attempts []RequestAttempt, err error, startedAt time.Time) {
+	if server.RequestLogger == nil {
+		return
+	}
+	event := RequestLogEvent{
+		EntryProtocol: "SOCKS5",
+		CredentialID:  credentialID,
+		Username:      username,
+		TargetAddress: targetAddress,
+		Status:        status,
+		Attempts:      attempts,
+		Duration:      time.Since(startedAt),
+	}
+	if selection.Node.ID != 0 {
+		event.SelectedNodeID = selection.Node.ID
+		event.SelectedNodeName = selection.Node.Name
+	}
+	if err != nil {
+		event.Error = err.Error()
+	}
+	server.RequestLogger.Record(event)
 }
 
 func readSOCKS5Auth(conn net.Conn) (string, string, error) {

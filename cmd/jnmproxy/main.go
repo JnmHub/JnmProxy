@@ -108,6 +108,7 @@ func main() {
 	healthRepo := repository.NewHealthRepository(store)
 	statsRepo := repository.NewStatsRepository(store)
 	operationLogRepo := repository.NewOperationLogRepository(store)
+	proxyRequestLogRepo := repository.NewProxyRequestLogRepository(store)
 	searchRepo := repository.NewSearchRepository(store)
 	authService := auth.NewService(credentialRepo)
 	groupingService := grouping.NewService(groupRepo)
@@ -138,6 +139,7 @@ func main() {
 		HealthRepo:          healthRepo,
 		StatsRepo:           statsRepo,
 		OperationLogRepo:    operationLogRepo,
+		ProxyRequestLogRepo: proxyRequestLogRepo,
 		SearchRepo:          searchRepo,
 		SubscriptionManager: subscriptionManager,
 		AuthService:         authService,
@@ -176,6 +178,9 @@ func main() {
 	httpProxyHandler := proxyserver.NewHTTPProxy(runtimeCache, outboundDialer)
 	httpProxyHandler.Stats = statsCollector
 	httpProxyHandler.MaxAttemptsPerRequest = cfg.Runtime.MaxAttemptsPerRequest
+	if cfg.Runtime.RecordFailedRequests {
+		httpProxyHandler.RequestLogger = &proxyserver.RequestLogger{Repo: proxyRequestLogRepo, RecordFailedOnly: true}
+	}
 	httpProxy := &http.Server{
 		Addr:              cfg.Proxy.HTTPAddr,
 		Handler:           httpProxyHandler,
@@ -189,6 +194,9 @@ func main() {
 	socksServer := proxyserver.NewSOCKS5Server(runtimeCache, outboundDialer)
 	socksServer.Stats = statsCollector
 	socksServer.MaxAttemptsPerRequest = cfg.Runtime.MaxAttemptsPerRequest
+	if cfg.Runtime.RecordFailedRequests {
+		socksServer.RequestLogger = &proxyserver.RequestLogger{Repo: proxyRequestLogRepo, RecordFailedOnly: true}
+	}
 
 	errCh := make(chan error, 3)
 	go backgroundScheduler.Run(signalCtx)

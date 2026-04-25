@@ -147,6 +147,55 @@ func TestHTTPProxyRetriesAnotherNodeWhenFirstDialFails(t *testing.T) {
 	}
 }
 
+func TestHTTPProxyWritesFailedRequestLogWhenAllAttemptsFail(t *testing.T) {
+	ctx := context.Background()
+	runtimeCache, storeDB := testRuntimeCacheWithHTTPUpstreamsAndDB(t, ctx, []string{
+		"http://" + closedLocalAddress(t),
+		"http://" + closedLocalAddress(t),
+	}, true)
+	logRepo := repository.NewProxyRequestLogRepository(storeDB)
+
+	handler := NewHTTPProxy(runtimeCache, outbound.NewDialer(200*time.Millisecond))
+	handler.MaxAttemptsPerRequest = 2
+	handler.RequestLogger = &RequestLogger{Repo: logRepo, RecordFailedOnly: true}
+	proxyServer := httptest.NewServer(handler)
+	defer proxyServer.Close()
+
+	proxyURL, err := url.Parse(proxyServer.URL)
+	if err != nil {
+		t.Fatalf("parse proxy url: %v", err)
+	}
+	client := &http.Client{
+		Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL)},
+		Timeout:   5 * time.Second,
+	}
+	req, err := http.NewRequest(http.MethodGet, "http://example.com/fail", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Proxy-Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("user:pass")))
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("proxy request should return 502 response, got error: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Fatalf("expected 502 after all attempts fail, got %d", resp.StatusCode)
+	}
+
+	logs, err := logRepo.List(ctx, repository.ProxyRequestLogListFilter{Search: "example.com", Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("list proxy request logs: %v", err)
+	}
+	if logs.Total != 1 || len(logs.Items) != 1 {
+		t.Fatalf("expected one failed request log, got %#v", logs)
+	}
+	logItem := logs.Items[0]
+	if logItem.Username != "user" || logItem.Status != "failed" || logItem.AttemptCount != 2 {
+		t.Fatalf("unexpected failed request log: %#v", logItem)
+	}
+}
+
 func TestHTTPProxyConcurrentRequests(t *testing.T) {
 	ctx := context.Background()
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
