@@ -15,6 +15,7 @@ type Config struct {
 	Database     DatabaseConfig     `yaml:"database"`
 	Subscription SubscriptionConfig `yaml:"subscription"`
 	Stats        StatsConfig        `yaml:"stats"`
+	Runtime      RuntimeConfig      `yaml:"runtime"`
 	Scheduler    SchedulerConfig    `yaml:"scheduler"`
 	SingBox      SingBoxConfig      `yaml:"sing_box"`
 	Admin        AdminConfig        `yaml:"admin"`
@@ -42,6 +43,13 @@ type SubscriptionConfig struct {
 
 type StatsConfig struct {
 	FlushIntervalSeconds int `yaml:"flush_interval_seconds"`
+}
+
+type RuntimeConfig struct {
+	MaxAttemptsPerRequest int  `yaml:"max_attempts_per_request"`
+	FailureThreshold      int  `yaml:"failure_threshold"`
+	CircuitBreakSeconds   int  `yaml:"circuit_break_seconds"`
+	RecordFailedRequests  bool `yaml:"record_failed_requests"`
 }
 
 type SchedulerConfig struct {
@@ -91,6 +99,12 @@ func Default() Config {
 		},
 		Stats: StatsConfig{
 			FlushIntervalSeconds: 10,
+		},
+		Runtime: RuntimeConfig{
+			MaxAttemptsPerRequest: 3,
+			FailureThreshold:      3,
+			CircuitBreakSeconds:   60,
+			RecordFailedRequests:  true,
 		},
 		Scheduler: SchedulerConfig{
 			SubscriptionTickSeconds:    30,
@@ -165,6 +179,15 @@ func (cfg Config) Validate() error {
 	}
 	if cfg.Stats.FlushIntervalSeconds <= 0 {
 		return errors.New("stats.flush_interval_seconds must be positive")
+	}
+	if cfg.Runtime.MaxAttemptsPerRequest <= 0 {
+		return errors.New("runtime.max_attempts_per_request must be positive")
+	}
+	if cfg.Runtime.FailureThreshold <= 0 {
+		return errors.New("runtime.failure_threshold must be positive")
+	}
+	if cfg.Runtime.CircuitBreakSeconds <= 0 {
+		return errors.New("runtime.circuit_break_seconds must be positive")
 	}
 	if cfg.Scheduler.SubscriptionTickSeconds <= 0 {
 		return errors.New("scheduler.subscription_tick_seconds must be positive")
@@ -248,6 +271,18 @@ func applyEnv(cfg *Config) error {
 		return err
 	}
 	if err := setInt("JNMPROXY_STATS_FLUSH_INTERVAL_SECONDS", &cfg.Stats.FlushIntervalSeconds); err != nil {
+		return err
+	}
+	if err := setInt("JNMPROXY_RUNTIME_MAX_ATTEMPTS_PER_REQUEST", &cfg.Runtime.MaxAttemptsPerRequest); err != nil {
+		return err
+	}
+	if err := setInt("JNMPROXY_RUNTIME_FAILURE_THRESHOLD", &cfg.Runtime.FailureThreshold); err != nil {
+		return err
+	}
+	if err := setInt("JNMPROXY_RUNTIME_CIRCUIT_BREAK_SECONDS", &cfg.Runtime.CircuitBreakSeconds); err != nil {
+		return err
+	}
+	if err := setBool("JNMPROXY_RUNTIME_RECORD_FAILED_REQUESTS", &cfg.Runtime.RecordFailedRequests); err != nil {
 		return err
 	}
 	if err := setInt("JNMPROXY_SCHEDULER_SUBSCRIPTION_TICK_SECONDS", &cfg.Scheduler.SubscriptionTickSeconds); err != nil {

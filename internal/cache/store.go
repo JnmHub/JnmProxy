@@ -56,6 +56,11 @@ type Selection struct {
 	GroupID    int64
 }
 
+type RuntimeOptions struct {
+	FailureThreshold     int
+	CircuitBreakDuration time.Duration
+}
+
 type Store struct {
 	mu                    sync.RWMutex
 	credentialsByUsername map[string]CredentialSnapshot
@@ -79,6 +84,8 @@ type selectionBag struct {
 type nodeFailureState struct {
 	Count        int
 	CircuitUntil time.Time
+	LastFailure  string
+	LastFailedAt time.Time
 }
 
 func NewStore() *Store {
@@ -129,6 +136,17 @@ func (store *Store) Credential(username string) (CredentialSnapshot, bool) {
 	return credential, ok
 }
 
+func (store *Store) ConfigureRuntime(options RuntimeOptions) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if options.FailureThreshold > 0 {
+		store.failureThreshold = options.FailureThreshold
+	}
+	if options.CircuitBreakDuration > 0 {
+		store.circuitBreakDuration = options.CircuitBreakDuration
+	}
+}
+
 func (store *Store) SelectNode(username string) (NodeSnapshot, error) {
 	selection, err := store.Select(username)
 	if err != nil {
@@ -138,6 +156,10 @@ func (store *Store) SelectNode(username string) (NodeSnapshot, error) {
 }
 
 func (store *Store) Select(username string) (Selection, error) {
+	return store.SelectExcluding(username, nil)
+}
+
+func (store *Store) SelectExcluding(username string, excludedNodeIDs map[int64]struct{}) (Selection, error) {
 	store.mu.Lock()
 	defer store.mu.Unlock()
 
@@ -147,6 +169,16 @@ func (store *Store) Select(username string) (Selection, error) {
 	}
 
 	candidateIDs := store.candidateIDsLocked(credential)
+	if len(excludedNodeIDs) > 0 {
+		filtered := make([]int64, 0, len(candidateIDs))
+		for _, nodeID := range candidateIDs {
+			if _, excluded := excludedNodeIDs[nodeID]; excluded {
+				continue
+			}
+			filtered = append(filtered, nodeID)
+		}
+		candidateIDs = filtered
+	}
 	if len(candidateIDs) == 0 {
 		return Selection{}, ErrNoCandidateNodes
 	}
@@ -166,12 +198,16 @@ func (store *Store) Select(username string) (Selection, error) {
 	}, nil
 }
 
-func (store *Store) ReportNodeFailure(nodeID int64) {
+func (store *Store) ReportNodeFailure(nodeID int64, reasons ...string) {
 	store.mu.Lock()
 	defer store.mu.Unlock()
 
 	state := store.nodeFailures[nodeID]
 	state.Count++
+	if len(reasons) > 0 {
+		state.LastFailure = reasons[0]
+		state.LastFailedAt = time.Now()
+	}
 	if state.Count >= store.failureThreshold {
 		state.CircuitUntil = time.Now().Add(store.circuitBreakDuration)
 	}

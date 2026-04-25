@@ -16,9 +16,10 @@ import (
 )
 
 type SOCKS5Server struct {
-	Cache  *cache.Store
-	Dialer *outbound.Dialer
-	Stats  *stats.Collector
+	Cache                 *cache.Store
+	Dialer                *outbound.Dialer
+	Stats                 *stats.Collector
+	MaxAttemptsPerRequest int
 }
 
 func NewSOCKS5Server(store *cache.Store, dialer *outbound.Dialer) *SOCKS5Server {
@@ -60,18 +61,10 @@ func (server *SOCKS5Server) handleConn(conn net.Conn) {
 		return
 	}
 
-	selection, err := server.Cache.Select(username)
-	if err != nil {
-		_ = writeSOCKS5Reply(conn, 0x04)
-		return
-	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	outConn, err := server.Dialer.DialContext(ctx, selection.Node, targetAddress)
+	selection, outConn, err := server.dialWithRetries(ctx, username, targetAddress)
 	if err != nil {
-		server.Cache.ReportNodeFailure(selection.Node.ID)
-		recordStats(server.Stats, selection, 0, 0, false)
 		_ = writeSOCKS5Reply(conn, 0x05)
 		return
 	}
@@ -79,13 +72,37 @@ func (server *SOCKS5Server) handleConn(conn net.Conn) {
 
 	_ = conn.SetDeadline(time.Time{})
 	if err := writeSOCKS5Reply(conn, 0x00); err != nil {
-		server.Cache.ReportNodeFailure(selection.Node.ID)
+		server.Cache.ReportNodeFailure(selection.Node.ID, err.Error())
 		recordStats(server.Stats, selection, 0, 0, false)
 		return
 	}
 	uploadBytes, downloadBytes := pipeConnections(conn, outConn)
 	server.Cache.ReportNodeSuccess(selection.Node.ID)
 	recordStats(server.Stats, selection, uploadBytes, downloadBytes, true)
+}
+
+func (server *SOCKS5Server) dialWithRetries(ctx context.Context, username string, targetAddress string) (cache.Selection, net.Conn, error) {
+	excluded := make(map[int64]struct{})
+	var lastErr error
+	for attempt := 0; attempt < normalizeMaxAttempts(server.MaxAttemptsPerRequest); attempt++ {
+		selection, err := server.Cache.SelectExcluding(username, excluded)
+		if err != nil {
+			lastErr = err
+			break
+		}
+		excluded[selection.Node.ID] = struct{}{}
+		outConn, err := server.Dialer.DialContext(ctx, selection.Node, targetAddress)
+		if err == nil {
+			return selection, outConn, nil
+		}
+		lastErr = err
+		server.Cache.ReportNodeFailure(selection.Node.ID, err.Error())
+		recordStats(server.Stats, selection, 0, 0, false)
+	}
+	if lastErr == nil {
+		lastErr = cache.ErrNoCandidateNodes
+	}
+	return cache.Selection{}, nil, lastErr
 }
 
 func readSOCKS5Auth(conn net.Conn) (string, string, error) {

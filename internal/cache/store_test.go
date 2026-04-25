@@ -150,6 +150,46 @@ func TestStoreSelectsNodesByCredentialBinding(t *testing.T) {
 	}
 }
 
+func TestSelectExcludingSkipsAlreadyTriedNodes(t *testing.T) {
+	store := NewStore()
+	store.credentialsByUsername["fixed-user"] = CredentialSnapshot{
+		ID:              1,
+		Username:        "fixed-user",
+		Enabled:         true,
+		BindMode:        model.CredentialBindModeNode,
+		SelectionPolicy: model.SelectionPolicyFixed,
+		Bindings: []BindingSnapshot{
+			{TargetType: "node", TargetID: 1},
+			{TargetType: "node", TargetID: 2},
+			{TargetType: "node", TargetID: 3},
+		},
+	}
+	for _, nodeID := range []int64{1, 2, 3} {
+		store.nodesByID[nodeID] = NodeSnapshot{ID: nodeID}
+	}
+
+	first, err := store.SelectExcluding("fixed-user", nil)
+	if err != nil {
+		t.Fatalf("select first: %v", err)
+	}
+	if first.Node.ID != 1 {
+		t.Fatalf("expected first node 1, got %d", first.Node.ID)
+	}
+
+	second, err := store.SelectExcluding("fixed-user", map[int64]struct{}{1: {}})
+	if err != nil {
+		t.Fatalf("select second: %v", err)
+	}
+	if second.Node.ID != 2 {
+		t.Fatalf("expected excluded node 1 to be skipped, got %d", second.Node.ID)
+	}
+
+	_, err = store.SelectExcluding("fixed-user", map[int64]struct{}{1: {}, 2: {}, 3: {}})
+	if err != ErrNoCandidateNodes {
+		t.Fatalf("expected no candidates after excluding all nodes, got %v", err)
+	}
+}
+
 func TestShuffleBagSelectsEachCandidateOncePerRound(t *testing.T) {
 	store := newShuffleTestStore("random-user", []int64{1, 2, 3, 4, 5})
 

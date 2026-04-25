@@ -60,6 +60,10 @@ func main() {
 	}
 
 	runtimeCache := cache.NewStore()
+	runtimeCache.ConfigureRuntime(cache.RuntimeOptions{
+		FailureThreshold:     cfg.Runtime.FailureThreshold,
+		CircuitBreakDuration: time.Duration(cfg.Runtime.CircuitBreakSeconds) * time.Second,
+	})
 	if err := runtimeCache.Load(ctx, store); err != nil {
 		logger.Error("load runtime cache failed", "error", err)
 		os.Exit(1)
@@ -171,6 +175,7 @@ func main() {
 	}
 	httpProxyHandler := proxyserver.NewHTTPProxy(runtimeCache, outboundDialer)
 	httpProxyHandler.Stats = statsCollector
+	httpProxyHandler.MaxAttemptsPerRequest = cfg.Runtime.MaxAttemptsPerRequest
 	httpProxy := &http.Server{
 		Addr:              cfg.Proxy.HTTPAddr,
 		Handler:           httpProxyHandler,
@@ -183,6 +188,7 @@ func main() {
 	}
 	socksServer := proxyserver.NewSOCKS5Server(runtimeCache, outboundDialer)
 	socksServer.Stats = statsCollector
+	socksServer.MaxAttemptsPerRequest = cfg.Runtime.MaxAttemptsPerRequest
 
 	errCh := make(chan error, 3)
 	go backgroundScheduler.Run(signalCtx)

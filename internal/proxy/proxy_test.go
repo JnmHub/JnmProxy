@@ -84,6 +84,69 @@ func TestHTTPProxyGETThroughHTTPOutbound(t *testing.T) {
 	}
 }
 
+func TestHTTPProxyRetriesAnotherNodeWhenFirstDialFails(t *testing.T) {
+	ctx := context.Background()
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("retry-ok"))
+	}))
+	defer target.Close()
+
+	badUpstreamURL := "http://" + closedLocalAddress(t)
+	goodUpstream := newHTTPConnectProxy(t)
+	defer goodUpstream.Close()
+
+	runtimeCache := testRuntimeCacheWithHTTPUpstreams(t, ctx, []string{badUpstreamURL, goodUpstream.URL})
+	statsCollector := stats.NewCollector(func() time.Time {
+		return time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
+	})
+	handler := NewHTTPProxy(runtimeCache, outbound.NewDialer(500*time.Millisecond))
+	handler.Stats = statsCollector
+	handler.MaxAttemptsPerRequest = 2
+	proxyServer := httptest.NewServer(handler)
+	defer proxyServer.Close()
+
+	proxyURL, err := url.Parse(proxyServer.URL)
+	if err != nil {
+		t.Fatalf("parse proxy url: %v", err)
+	}
+	client := &http.Client{
+		Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL)},
+		Timeout:   5 * time.Second,
+	}
+	for i := 0; i < 2; i++ {
+		req, err := http.NewRequest(http.MethodGet, target.URL+"/retry", nil)
+		if err != nil {
+			t.Fatalf("new request: %v", err)
+		}
+		req.Header.Set("Proxy-Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("user:pass")))
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatalf("proxy request %d: %v", i, err)
+		}
+		body, err := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if err != nil {
+			t.Fatalf("read body %d: %v", i, err)
+		}
+		if resp.StatusCode != http.StatusOK || string(body) != "retry-ok" {
+			t.Fatalf("unexpected retry response %d status=%d body=%q", i, resp.StatusCode, string(body))
+		}
+	}
+
+	hourly, _ := statsCollector.Snapshot()
+	var successes, failures int64
+	for _, counter := range hourly {
+		successes += counter.SuccessConnections
+		failures += counter.FailedConnections
+	}
+	if successes != 2 {
+		t.Fatalf("expected two successful final requests, got %d", successes)
+	}
+	if failures < 1 {
+		t.Fatalf("expected at least one failed upstream attempt before retry, got %d", failures)
+	}
+}
+
 func TestHTTPProxyConcurrentRequests(t *testing.T) {
 	ctx := context.Background()
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -335,6 +398,18 @@ func testRuntimeCache(t *testing.T, ctx context.Context, upstreamURL string) *ca
 func testRuntimeCacheWithDB(t *testing.T, ctx context.Context, upstreamURL string) (*cache.Store, *sql.DB) {
 	t.Helper()
 
+	return testRuntimeCacheWithHTTPUpstreamsAndDB(t, ctx, []string{upstreamURL}, false)
+}
+
+func testRuntimeCacheWithHTTPUpstreams(t *testing.T, ctx context.Context, upstreamURLs []string) *cache.Store {
+	t.Helper()
+	runtimeCache, _ := testRuntimeCacheWithHTTPUpstreamsAndDB(t, ctx, upstreamURLs, true)
+	return runtimeCache
+}
+
+func testRuntimeCacheWithHTTPUpstreamsAndDB(t *testing.T, ctx context.Context, upstreamURLs []string, bindGroup bool) (*cache.Store, *sql.DB) {
+	t.Helper()
+
 	storeDB, err := db.Open(ctx, filepath.Join(t.TempDir(), "jnmproxy.db"))
 	if err != nil {
 		t.Fatalf("open db: %v", err)
@@ -344,47 +419,70 @@ func testRuntimeCacheWithDB(t *testing.T, ctx context.Context, upstreamURL strin
 		t.Fatalf("migrate db: %v", err)
 	}
 
-	upstreamParsed, err := url.Parse(upstreamURL)
-	if err != nil {
-		t.Fatalf("parse upstream url: %v", err)
-	}
-	host, portText, err := net.SplitHostPort(upstreamParsed.Host)
-	if err != nil {
-		t.Fatalf("split upstream host: %v", err)
-	}
-	port, err := strconv.Atoi(portText)
-	if err != nil {
-		t.Fatalf("parse upstream port: %v", err)
-	}
-
 	subRepo := repository.NewSubscriptionRepository(storeDB)
 	subscription, err := subRepo.Create(ctx, repository.CreateSubscriptionParams{Name: "sub", URL: "https://example.com/sub", Enabled: true})
 	if err != nil {
 		t.Fatalf("create subscription: %v", err)
 	}
-	if err := subRepo.UpsertNodes(ctx, []repository.UpsertProxyNodeParams{
-		{
+	upserts := make([]repository.UpsertProxyNodeParams, 0, len(upstreamURLs))
+	for index, upstreamURL := range upstreamURLs {
+		upstreamParsed, err := url.Parse(upstreamURL)
+		if err != nil {
+			t.Fatalf("parse upstream url: %v", err)
+		}
+		host, portText, err := net.SplitHostPort(upstreamParsed.Host)
+		if err != nil {
+			t.Fatalf("split upstream host: %v", err)
+		}
+		port, err := strconv.Atoi(portText)
+		if err != nil {
+			t.Fatalf("parse upstream port: %v", err)
+		}
+		upserts = append(upserts, repository.UpsertProxyNodeParams{
 			SubscriptionID:      subscription.ID,
-			SubscriptionNodeKey: "http-upstream",
-			Name:                "HTTP upstream",
+			SubscriptionNodeKey: fmt.Sprintf("http-upstream-%d", index),
+			Name:                fmt.Sprintf("HTTP upstream %d", index),
 			Protocol:            "http",
 			Server:              host,
 			Port:                port,
 			RawConfigJSON:       "{}",
 			AdapterStatus:       "supported",
-		},
-	}); err != nil {
+		})
+	}
+	if err := subRepo.UpsertNodes(ctx, upserts); err != nil {
 		t.Fatalf("upsert node: %v", err)
+	}
+	nodes, err := subRepo.ListNodesBySubscription(ctx, subscription.ID)
+	if err != nil {
+		t.Fatalf("list nodes: %v", err)
 	}
 
 	authService := auth.NewService(repository.NewCredentialRepository(storeDB))
-	if _, err := authService.CreateCredential(ctx, auth.CreateCredentialInput{
+	input := auth.CreateCredentialInput{
 		Username:        "user",
 		Password:        "pass",
 		Enabled:         true,
 		BindMode:        "all",
 		SelectionPolicy: "fixed",
-	}); err != nil {
+	}
+	if bindGroup {
+		groupRepo := repository.NewGroupRepository(storeDB)
+		group, err := groupRepo.CreateGroup(ctx, repository.CreateGroupParams{Name: "retry-group"})
+		if err != nil {
+			t.Fatalf("create retry group: %v", err)
+		}
+		nodeIDs := make([]int64, 0, len(nodes))
+		for _, node := range nodes {
+			nodeIDs = append(nodeIDs, node.ID)
+		}
+		if err := groupRepo.AddNodesToGroup(ctx, group.ID, nodeIDs); err != nil {
+			t.Fatalf("add nodes to retry group: %v", err)
+		}
+		input.BindMode = "group"
+		input.SelectionPolicy = "random"
+		input.Bindings = []repository.CredentialBindingTarget{{TargetType: "group", TargetID: group.ID}}
+	}
+	if _, err := authService.CreateCredential(ctx, input); err != nil {
 		t.Fatalf("create credential: %v", err)
 	}
 
@@ -393,6 +491,19 @@ func testRuntimeCacheWithDB(t *testing.T, ctx context.Context, upstreamURL strin
 		t.Fatalf("load cache: %v", err)
 	}
 	return runtimeCache, storeDB
+}
+
+func closedLocalAddress(t *testing.T) string {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen closed address: %v", err)
+	}
+	address := listener.Addr().String()
+	if err := listener.Close(); err != nil {
+		t.Fatalf("close listener: %v", err)
+	}
+	return address
 }
 
 func socks5Connect(conn net.Conn, username string, password string, target string) error {
