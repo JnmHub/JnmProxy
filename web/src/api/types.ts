@@ -9,6 +9,11 @@ export interface SystemHealth {
   time: string;
 }
 
+export interface SystemProxyStatus {
+  http_addr: string;
+  socks_addr: string;
+}
+
 export interface SingBoxStatus {
   enabled: boolean;
   version: string;

@@ -146,6 +146,10 @@ func main() {
 		GroupingService:     groupingService,
 		HealthChecker:       backgroundScheduler.HealthChecker,
 		StatsCollector:      statsCollector,
+		ProxyStatus: &api.ProxyStatus{
+			HTTPAddr:  cfg.Proxy.HTTPAddr,
+			SOCKSAddr: cfg.Proxy.SOCKSAddr,
+		},
 		SingBoxStatus: &api.SingBoxStatus{
 			Enabled:                  cfg.SingBox.Enabled,
 			Version:                  singbox.Version,

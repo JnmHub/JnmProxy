@@ -40,8 +40,14 @@ type Server struct {
 	HealthChecker          scheduler.NodeChecker
 	StatsCollector         *stats.Collector
 	SingBoxStatus          *SingBoxStatus
+	ProxyStatus            *ProxyStatus
 	NodeAdapterInvalidator func(nodeID int64)
 	AdminToken             string
+}
+
+type ProxyStatus struct {
+	HTTPAddr  string `json:"http_addr"`
+	SOCKSAddr string `json:"socks_addr"`
 }
 
 type SingBoxStatus struct {
@@ -124,6 +130,10 @@ func (server *Server) handleSystem(w http.ResponseWriter, r *http.Request, segme
 	}
 	if len(segments) == 2 && segments[1] == "sing-box" && r.Method == http.MethodGet {
 		writeJSON(w, http.StatusOK, server.currentSingBoxStatus())
+		return
+	}
+	if len(segments) == 2 && segments[1] == "proxy" && r.Method == http.MethodGet {
+		writeJSON(w, http.StatusOK, server.currentProxyStatus())
 		return
 	}
 	writeError(w, http.StatusNotFound, "not found")
@@ -838,6 +848,13 @@ func (server *Server) currentSingBoxStatus() SingBoxStatus {
 		}
 	}
 	return status
+}
+
+func (server *Server) currentProxyStatus() ProxyStatus {
+	if server.ProxyStatus == nil {
+		return ProxyStatus{}
+	}
+	return *server.ProxyStatus
 }
 
 func defaultSingBoxSupportedProtocols() []string {

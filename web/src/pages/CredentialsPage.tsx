@@ -5,7 +5,8 @@ import { useSearchParams } from 'react-router-dom';
 import { createCredential, deleteCredential, listCredentials, resetCredentialPassword, updateCredential, type CredentialInput, type CredentialUpdateInput } from '../api/credentials';
 import { listGroups } from '../api/groups';
 import { listNodes } from '../api/nodes';
-import type { BindMode, Credential, CredentialBinding, SelectionPolicy } from '../api/types';
+import { getProxyStatus } from '../api/system';
+import type { BindMode, Credential, CredentialBinding, SelectionPolicy, SystemProxyStatus } from '../api/types';
 import { Badge } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
 import { Card, CardHeader } from '../components/ui/Card';
@@ -32,6 +33,11 @@ type CreateForm = ScopeForm & {
 type CommandSet = {
   socks5h: string;
   http: string;
+};
+
+type CommandInput = {
+  username: string;
+  password: string;
 };
 
 const defaultCreateForm: CreateForm = {
@@ -63,10 +69,11 @@ export function CredentialsPage() {
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
   const [newPassword, setNewPassword] = useState('');
   const [editForm, setEditForm] = useState<ScopeForm>(defaultEditForm);
-  const [createdCommands, setCreatedCommands] = useState<CommandSet | null>(null);
+  const [createdCommands, setCreatedCommands] = useState<CommandInput | null>(null);
   const [commandCredential, setCommandCredential] = useState<Credential | null>(null);
 
   const credentialsQuery = useQuery({ queryKey: ['credentials'], queryFn: listCredentials });
+  const proxyStatusQuery = useQuery({ queryKey: ['system', 'proxy'], queryFn: getProxyStatus });
   const groupsQuery = useQuery({ queryKey: ['groups'], queryFn: listGroups });
   const nodesQuery = useQuery({ queryKey: ['nodes'], queryFn: () => listNodes() });
 
@@ -81,7 +88,7 @@ export function CredentialsPage() {
   const invalidateCredentials = () => { void queryClient.invalidateQueries({ queryKey: ['credentials'] }); };
   const createMutation = useMutation({
     mutationFn: (input: CredentialInput) => createCredential(input),
-    onSuccess: (_credential, input) => { setCreatedCommands(proxyCommands(input.username, input.password)); setOpen(false); setForm(defaultCreateForm); invalidateCredentials(); },
+    onSuccess: (_credential, input) => { setCreatedCommands({ username: input.username, password: input.password }); setOpen(false); setForm(defaultCreateForm); invalidateCredentials(); },
   });
   const updateMutation = useMutation({ mutationFn: ({ id, enabled }: { id: number; enabled: boolean }) => updateCredential(id, { enabled }), onSuccess: invalidateCredentials });
   const editMutation = useMutation({
@@ -92,7 +99,7 @@ export function CredentialsPage() {
     mutationFn: ({ id, password }: { id: number; password: string }) => resetCredentialPassword(id, password),
     onSuccess: (_result, variables) => {
       const credential = (credentialsQuery.data ?? []).find((item) => item.id === variables.id);
-      if (credential) setCreatedCommands(proxyCommands(credential.username, variables.password));
+      if (credential) setCreatedCommands({ username: credential.username, password: variables.password });
       setResetID(0);
       setNewPassword('');
       invalidateCredentials();
@@ -214,14 +221,14 @@ export function CredentialsPage() {
       <CommandModal
         open={Boolean(createdCommands)}
         title="凭证创建成功"
-        commands={createdCommands ?? emptyCommandSet()}
+        commands={createdCommands ? proxyCommands(createdCommands.username, createdCommands.password, proxyStatusQuery.data) : emptyCommandSet()}
         description="这是唯一一次能直接展示明文密码的测试命令，关闭后前端不会保存密码。"
         onClose={() => setCreatedCommands(null)}
       />
       <CommandModal
         open={Boolean(commandCredential)}
         title="测试命令"
-        commands={commandCredential ? proxyCommands(commandCredential.username, '<填写密码>') : emptyCommandSet()}
+        commands={commandCredential ? proxyCommands(commandCredential.username, '<填写密码>', proxyStatusQuery.data) : emptyCommandSet()}
         description="已有凭证不会返回旧密码明文，请把命令里的 <填写密码> 替换成你自己保存的密码。"
         onClose={() => setCommandCredential(null)}
       />
@@ -397,13 +404,49 @@ function uniqueBindings(bindings: CredentialBinding[]) {
   });
 }
 
-function proxyCommands(username: string, password: string): CommandSet {
+function proxyCommands(username: string, password: string, proxyStatus?: SystemProxyStatus): CommandSet {
   const safeUsername = encodeURIComponent(username);
   const safePassword = password.startsWith('<') ? password : encodeURIComponent(password);
+  const socksAddress = commandAddress(proxyStatus?.socks_addr, '127.0.0.1:1080');
+  const httpAddress = commandAddress(proxyStatus?.http_addr, '127.0.0.1:1081');
   return {
-    socks5h: `curl --proxy socks5h://${safeUsername}:${safePassword}@127.0.0.1:1080 https://httpbin.org/ip`,
-    http: `curl -x http://${safeUsername}:${safePassword}@127.0.0.1:1081 https://httpbin.org/ip`,
+    socks5h: `curl --proxy socks5h://${safeUsername}:${safePassword}@${socksAddress} https://httpbin.org/ip`,
+    http: `curl -x http://${safeUsername}:${safePassword}@${httpAddress} https://httpbin.org/ip`,
   };
+}
+
+function commandAddress(configAddress: string | undefined, fallbackAddress: string) {
+  const fallback = splitListenAddress(fallbackAddress);
+  const parsed = splitListenAddress(configAddress || fallbackAddress);
+  let host = parsed.host || fallback.host || '127.0.0.1';
+  const port = parsed.port || fallback.port;
+  if (host === '0.0.0.0' || host === '::' || host === '[::]') {
+    host = browserHost();
+  }
+  if (host.includes(':') && !host.startsWith('[')) {
+    host = `[${host}]`;
+  }
+  return `${host}:${port}`;
+}
+
+function splitListenAddress(address: string) {
+  const value = address.trim();
+  if (value.startsWith('[')) {
+    const end = value.indexOf(']');
+    const host = end > 0 ? value.slice(1, end) : value;
+    const port = end > 0 && value.slice(end + 1).startsWith(':') ? value.slice(end + 2) : '';
+    return { host, port };
+  }
+  const colon = value.lastIndexOf(':');
+  if (colon < 0) {
+    return { host: value, port: '' };
+  }
+  return { host: value.slice(0, colon), port: value.slice(colon + 1) };
+}
+
+function browserHost() {
+  if (typeof window === 'undefined') return '127.0.0.1';
+  return window.location.hostname || '127.0.0.1';
 }
 
 function emptyCommandSet(): CommandSet {

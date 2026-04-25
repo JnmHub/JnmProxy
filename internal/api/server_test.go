@@ -90,6 +90,10 @@ proxies:
 	if singBoxStatus["enabled"] != true || singBoxStatus["adapter_configured"] != true {
 		t.Fatalf("unexpected sing-box status: %#v", singBoxStatus)
 	}
+	proxyStatus := getJSON(t, handler, "/api/v1/system/proxy").(map[string]any)
+	if proxyStatus["http_addr"] != "127.0.0.1:1081" || proxyStatus["socks_addr"] != "127.0.0.1:1080" {
+		t.Fatalf("unexpected proxy status: %#v", proxyStatus)
+	}
 	rebuild := postJSON(t, handler, "/api/v1/nodes/"+itoa(nodeID)+"/rebuild-adapter", map[string]any{})
 	if rebuild["status"] != "adapter_rebuild_scheduled" || rebuiltNodeID != nodeID {
 		t.Fatalf("unexpected rebuild response=%#v rebuilt=%d", rebuild, rebuiltNodeID)
@@ -237,6 +241,7 @@ func newTestServer(t *testing.T, store *sql.DB) *Server {
 		AuthService:         auth.NewService(credentialRepo),
 		GroupingService:     grouping.NewService(groupRepo),
 		StatsCollector:      stats.NewCollector(time.Now),
+		ProxyStatus:         &ProxyStatus{HTTPAddr: "127.0.0.1:1081", SOCKSAddr: "127.0.0.1:1080"},
 		SingBoxStatus:       &SingBoxStatus{Enabled: true, Version: "v1.13.8", Mode: "auto"},
 	}
 }
