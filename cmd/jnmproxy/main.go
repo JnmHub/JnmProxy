@@ -149,6 +149,7 @@ func main() {
 				HealthCheckTarget:        cfg.SingBox.HealthCheckTarget,
 				EnableUDP:                cfg.SingBox.EnableUDP,
 				QUICEnabled:              singbox.QUICEnabled(),
+				UTLSEnabled:              singbox.UTLSEnabled(),
 				SupportedProtocols:       singbox.SupportedProtocols(),
 				License:                  "GPL via github.com/sagernet/sing-box",
 			},

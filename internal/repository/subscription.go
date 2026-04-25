@@ -73,7 +73,7 @@ type UpsertProxyNodeParams struct {
 func (repo *SubscriptionRepository) Create(ctx context.Context, params CreateSubscriptionParams) (*model.Subscription, error) {
 	userAgent := params.UserAgent
 	if userAgent == "" {
-		userAgent = "clash/1.18.0"
+		userAgent = "clash.meta"
 	}
 	refreshInterval := params.RefreshIntervalSeconds
 	if refreshInterval <= 0 {

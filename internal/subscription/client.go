@@ -14,6 +14,8 @@ type FetchResult struct {
 	Usage      UsageInfo
 }
 
+const DefaultUserAgent = "clash.meta"
+
 type Client struct {
 	httpClient *http.Client
 }
@@ -30,7 +32,7 @@ func (client *Client) Fetch(ctx context.Context, rawURL string, userAgent string
 		timeout = 20 * time.Second
 	}
 	if userAgent == "" {
-		userAgent = "clash/1.18.0"
+		userAgent = DefaultUserAgent
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, timeout)

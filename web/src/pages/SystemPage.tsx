@@ -31,6 +31,7 @@ export function SystemPage() {
             <Row label="优先原生 HTTP/SOCKS"><Badge value={singBox?.prefer_native_http_socks ? 'supported' : 'unsupported'}>{singBox?.prefer_native_http_socks ? '是' : '否'}</Badge></Row>
             <Row label="Adapter 配置"><Badge value={singBox?.adapter_configured ? 'supported' : 'unsupported'}>{singBox?.adapter_configured ? '已配置' : '未配置'}</Badge></Row>
             <Row label="QUIC"><Badge value={singBox?.quic_enabled ? 'supported' : 'unsupported'}>{singBox?.quic_enabled ? '已启用' : '未启用'}</Badge></Row>
+            <Row label="uTLS"><Badge value={singBox?.utls_enabled ? 'supported' : 'unsupported'}>{singBox?.utls_enabled ? '已启用' : '未启用'}</Badge></Row>
             <Row label="UDP"><Badge value={singBox?.enable_udp ? 'supported' : 'unsupported'}>{singBox?.enable_udp ? '已启用' : '未启用'}</Badge></Row>
             <Row label="最大引擎"><span className="font-mono">{singBox?.max_active_engines ?? '—'}</span></Row>
             <Row label="空闲超时"><span className="font-mono">{singBox?.engine_idle_timeout_seconds ? `${singBox.engine_idle_timeout_seconds}s` : '—'}</span></Row>

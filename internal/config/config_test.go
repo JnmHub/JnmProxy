@@ -14,8 +14,11 @@ func TestLoadMissingFileUsesDefaults(t *testing.T) {
 	if cfg.Database.Path != "./data/jnmproxy.db" {
 		t.Fatalf("unexpected database path: %s", cfg.Database.Path)
 	}
-	if cfg.Subscription.DefaultUserAgent != "clash/1.18.0" {
+	if cfg.Subscription.DefaultUserAgent != "clash.meta" {
 		t.Fatalf("unexpected user agent: %s", cfg.Subscription.DefaultUserAgent)
+	}
+	if cfg.Scheduler.HealthCheckTarget != "www.gstatic.com:443" {
+		t.Fatalf("unexpected health check target: %s", cfg.Scheduler.HealthCheckTarget)
 	}
 	if !cfg.SingBox.Enabled || cfg.SingBox.Version != "v1.13.8" || cfg.SingBox.Mode != "auto" {
 		t.Fatalf("unexpected sing-box defaults: %#v", cfg.SingBox)

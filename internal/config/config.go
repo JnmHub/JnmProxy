@@ -80,7 +80,7 @@ func Default() Config {
 			Path: "./data/jnmproxy.db",
 		},
 		Subscription: SubscriptionConfig{
-			DefaultUserAgent:              "clash/1.18.0",
+			DefaultUserAgent:              "clash.meta",
 			DefaultRefreshIntervalSeconds: 3600,
 			RequestTimeoutSeconds:         20,
 		},
@@ -90,7 +90,7 @@ func Default() Config {
 		Scheduler: SchedulerConfig{
 			SubscriptionTickSeconds:    30,
 			HealthCheckIntervalSeconds: 300,
-			HealthCheckTarget:          "",
+			HealthCheckTarget:          "www.gstatic.com:443",
 		},
 		SingBox: SingBoxConfig{
 			Enabled:                   true,

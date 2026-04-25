@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS subscriptions (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	name TEXT NOT NULL,
 	url TEXT NOT NULL,
-	user_agent TEXT NOT NULL DEFAULT 'clash/1.18.0',
+	user_agent TEXT NOT NULL DEFAULT 'clash.meta',
 	refresh_interval_seconds INTEGER NOT NULL DEFAULT 3600 CHECK (refresh_interval_seconds > 0),
 	enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
 	last_refresh_at TEXT,

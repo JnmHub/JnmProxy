@@ -50,6 +50,7 @@ type SingBoxStatus struct {
 	HealthCheckTarget        string   `json:"health_check_target,omitempty"`
 	EnableUDP                bool     `json:"enable_udp"`
 	QUICEnabled              bool     `json:"quic_enabled"`
+	UTLSEnabled              bool     `json:"utls_enabled"`
 	SupportedProtocols       []string `json:"supported_protocols"`
 	License                  string   `json:"license"`
 }

@@ -40,6 +40,7 @@ API 前缀：`/api/v1`
   "health_check_target": "www.gstatic.com:443",
   "enable_udp": false,
   "quic_enabled": true,
+  "utls_enabled": true,
   "supported_protocols": ["ss", "vmess", "vless", "trojan", "hysteria2", "tuic"],
   "license": "GPL via github.com/sagernet/sing-box"
 }
@@ -57,7 +58,7 @@ API 前缀：`/api/v1`
 {
   "name": "示例订阅",
   "url": "https://example.com/sub",
-  "user_agent": "clash/1.18.0",
+  "user_agent": "clash.meta",
   "refresh_interval_seconds": 3600,
   "enabled": true
 }
@@ -302,6 +303,12 @@ MVP 第一批 TCP 出站支持：
 - `tuic`
 
 未启用 `with_quic` 时，Hysteria2/TUIC 节点会保留在数据库中，但转换结果为 `sing_box_status=error`，不会进入调度。
+
+REALITY 或带 `client-fingerprint` 的 TLS 节点需要启用 `with_utls`，建议生产启动使用：
+
+```bash
+go run -tags "with_quic with_utls" ./cmd/jnmproxy
+```
 
 当前不开放 sing-box 原生管理接口，不导入机场规则、分流规则和策略组规则。HTTP/SOCKS5 入站认证、节点调度、健康检查和流量统计仍由 JnmProxy 控制。
 

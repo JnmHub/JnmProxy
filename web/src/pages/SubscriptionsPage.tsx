@@ -15,7 +15,7 @@ import { DataTable } from '../components/ui/Table';
 import { formatBytes, usagePercent } from '../utils/bytes';
 import { formatTime, maskURL } from '../utils/format';
 
-const defaultInput: SubscriptionInput = { name: '', url: '', user_agent: 'clash/1.18.0', refresh_interval_seconds: 3600, enabled: true };
+const defaultInput: SubscriptionInput = { name: '', url: '', user_agent: 'clash.meta', refresh_interval_seconds: 3600, enabled: true };
 
 export function SubscriptionsPage() {
   const queryClient = useQueryClient();

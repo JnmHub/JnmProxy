@@ -5,7 +5,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -57,7 +59,7 @@ type NodeInvalidator func(nodeID int64)
 func NewManager(repo *repository.SubscriptionRepository, opts ManagerOptions) *Manager {
 	defaultUserAgent := opts.DefaultUserAgent
 	if defaultUserAgent == "" {
-		defaultUserAgent = "clash/1.18.0"
+		defaultUserAgent = DefaultUserAgent
 	}
 	requestTimeout := opts.RequestTimeout
 	if requestTimeout <= 0 {
@@ -92,11 +94,25 @@ func (manager *Manager) Refresh(ctx context.Context, subscriptionID int64) (*Ref
 		userAgent = manager.defaultUserAgent
 	}
 
-	fetchResult, err := manager.client.Fetch(ctx, subscription.URL, userAgent, manager.requestTimeout)
+	fetchResult, parsedNodes, err := manager.fetchParsedNodes(ctx, subscription.URL, userAgent)
+	if err != nil && fetchResult != nil && !strings.EqualFold(userAgent, DefaultUserAgent) {
+		fallbackFetchResult, fallbackParsedNodes, fallbackErr := manager.fetchParsedNodes(ctx, subscription.URL, DefaultUserAgent)
+		if fallbackErr == nil && !looksLikeUnsupportedClientNodes(fallbackParsedNodes) {
+			fetchResult = fallbackFetchResult
+			parsedNodes = fallbackParsedNodes
+			err = nil
+		}
+	}
 	if err != nil {
 		finishedAt := time.Now().UTC()
+		var httpStatus *int64
+		if fetchResult != nil {
+			status := int64(fetchResult.StatusCode)
+			httpStatus = &status
+		}
 		recordErr := manager.repo.RecordRefreshResult(ctx, subscriptionID, repository.SubscriptionRefreshResult{
 			Status:        "failed",
+			HTTPStatus:    httpStatus,
 			Error:         err.Error(),
 			StartedAt:     startedAtText,
 			FinishedAt:    finishedAt.Format(time.RFC3339),
@@ -109,8 +125,15 @@ func (manager *Manager) Refresh(ctx context.Context, subscriptionID int64) (*Ref
 		return nil, err
 	}
 
-	parsedNodes, err := ParseNodes(fetchResult.Body)
-	if err != nil {
+	if looksLikeUnsupportedClientNodes(parsedNodes) && !strings.EqualFold(userAgent, DefaultUserAgent) {
+		fallbackFetchResult, fallbackParsedNodes, fallbackErr := manager.fetchParsedNodes(ctx, subscription.URL, DefaultUserAgent)
+		if fallbackErr == nil && !looksLikeUnsupportedClientNodes(fallbackParsedNodes) {
+			fetchResult = fallbackFetchResult
+			parsedNodes = fallbackParsedNodes
+		}
+	}
+	if looksLikeUnsupportedClientNodes(parsedNodes) {
+		err := errors.New("subscription returned unsupported-client placeholder nodes; set User-Agent to clash.meta")
 		finishedAt := time.Now().UTC()
 		httpStatus := int64(fetchResult.StatusCode)
 		recordErr := manager.repo.RecordRefreshResult(ctx, subscriptionID, repository.SubscriptionRefreshResult{
@@ -233,6 +256,18 @@ func (manager *Manager) Refresh(ctx context.Context, subscriptionID int64) (*Ref
 	}, nil
 }
 
+func (manager *Manager) fetchParsedNodes(ctx context.Context, rawURL string, userAgent string) (*FetchResult, []ParsedNode, error) {
+	fetchResult, err := manager.client.Fetch(ctx, rawURL, userAgent, manager.requestTimeout)
+	if err != nil {
+		return nil, nil, err
+	}
+	parsedNodes, err := ParseNodes(fetchResult.Body)
+	if err != nil {
+		return fetchResult, nil, err
+	}
+	return fetchResult, parsedNodes, nil
+}
+
 func StableNodeKey(subscriptionID int64, node ParsedNode, rawConfigJSON string) string {
 	identity := fmt.Sprintf("%d|%s|%s|%d|%s|%s", subscriptionID, strings.ToLower(node.Protocol), node.Server, node.Port, node.Name, rawConfigJSON)
 	sum := sha256.Sum256([]byte(identity))
@@ -270,6 +305,32 @@ func (manager *Manager) buildSingBoxOutbound(node ParsedNode) SingBoxBuildResult
 		result.TransportType = ""
 	}
 	return result
+}
+
+func looksLikeUnsupportedClientNodes(nodes []ParsedNode) bool {
+	if len(nodes) == 0 {
+		return false
+	}
+	var hintCount, loopbackCount int
+	for _, node := range nodes {
+		name := strings.ToLower(node.Name)
+		if strings.Contains(node.Name, "不支持") || strings.Contains(node.Name, "支持的代理软件") ||
+			strings.Contains(name, "unsupported") || strings.Contains(name, "not support") {
+			hintCount++
+		}
+		if isLoopbackServer(node.Server) {
+			loopbackCount++
+		}
+	}
+	return hintCount > 0 && loopbackCount == len(nodes)
+}
+
+func isLoopbackServer(server string) bool {
+	if strings.EqualFold(server, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(server)
+	return ip != nil && ip.IsLoopback()
 }
 
 func (manager *Manager) invalidateNodes(nodeIDs map[int64]struct{}) {

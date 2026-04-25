@@ -65,6 +65,9 @@ func buildOutboundMap(nodeID int64, node subscription.ParsedNode) (map[string]an
 	transport := buildTransport(raw, query)
 	transportType := stringValue(transport["type"])
 	tlsOptions := buildTLSOptions(protocol, raw, query)
+	if requiresUTLS(tlsOptions) && !UTLSEnabled() {
+		return nil, "", false, errors.New("sing-box uTLS support is not included; rebuild with -tags with_utls")
+	}
 
 	switch protocol {
 	case "shadowsocks":
@@ -199,6 +202,19 @@ func requiresQUIC(protocol string) bool {
 	}
 }
 
+func requiresUTLS(tlsOptions map[string]any) bool {
+	if len(tlsOptions) == 0 {
+		return false
+	}
+	if _, ok := tlsOptions["utls"]; ok {
+		return true
+	}
+	if reality, ok := tlsOptions["reality"].(map[string]any); ok {
+		return len(reality) > 0
+	}
+	return false
+}
+
 func rawConfig(node subscription.ParsedNode) map[string]any {
 	if node.RawConfig == nil {
 		return map[string]any{}
@@ -227,7 +243,7 @@ func buildTLSOptions(protocol string, raw map[string]any, query url.Values) map[
 		return nil
 	}
 	tlsOptions := map[string]any{"enabled": true}
-	if serverName := firstNonEmpty(configString(raw, "servername"), configString(raw, "server_name"), configString(raw, "sni"), query.Get("sni"), query.Get("fp_server_name")); serverName != "" {
+	if serverName := firstNonEmpty(configString(raw, "servername"), configString(raw, "server_name"), configString(raw, "sni"), query.Get("sni"), query.Get("fp_server_name"), wsHostHeader(raw)); serverName != "" {
 		tlsOptions["server_name"] = serverName
 	}
 	if configBool(raw, "skip-cert-verify") || configBool(raw, "skip_cert_verify") || query.Get("allowInsecure") == "1" {
@@ -265,7 +281,7 @@ func buildTransport(raw map[string]any, query url.Values) map[string]any {
 		if path := firstNonEmpty(configString(wsOptions, "path"), query.Get("path")); path != "" {
 			transport["path"] = path
 		}
-		if host := firstNonEmpty(configString(wsOptions, "host"), query.Get("host")); host != "" {
+		if host := firstNonEmpty(configString(wsOptions, "host"), wsHostHeader(raw), query.Get("host")); host != "" {
 			transport["headers"] = map[string][]string{"Host": {host}}
 		}
 		return transport
@@ -289,6 +305,16 @@ func buildTransport(raw map[string]any, query url.Values) map[string]any {
 	default:
 		return nil
 	}
+}
+
+func wsHostHeader(raw map[string]any) string {
+	wsOptions := firstMap(raw, "ws-opts", "ws_opts")
+	headers := firstMap(wsOptions, "headers")
+	return firstNonEmpty(
+		configString(headers, "Host"),
+		configString(headers, "host"),
+		configString(headers, ":authority"),
+	)
 }
 
 func defaultUDPSupport(protocol string, raw map[string]any, query url.Values) bool {

@@ -33,7 +33,7 @@ func TestSubscriptionCredentialAndGroupAPI(t *testing.T) {
 	}
 
 	subscriptionServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.UserAgent() != "clash/1.18.0" {
+		if r.UserAgent() != subscription.DefaultUserAgent {
 			t.Fatalf("unexpected user agent: %s", r.UserAgent())
 		}
 		w.Header().Set("subscription-userinfo", "upload=1; download=2; total=3; expire=1700000000")

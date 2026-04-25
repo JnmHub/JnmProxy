@@ -22,6 +22,7 @@ export interface SingBoxStatus {
   health_check_target?: string;
   enable_udp: boolean;
   quic_enabled: boolean;
+  utls_enabled: boolean;
   supported_protocols: string[];
   license: string;
 }

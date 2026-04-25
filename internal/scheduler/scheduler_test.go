@@ -30,7 +30,7 @@ func TestRunDueRefreshes(t *testing.T) {
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.UserAgent() != "clash/1.18.0" {
+		if r.UserAgent() != subscription.DefaultUserAgent {
 			t.Fatalf("unexpected user agent: %s", r.UserAgent())
 		}
 		_, _ = w.Write([]byte(`

@@ -107,6 +107,109 @@ proxies:
 	}
 }
 
+func TestManagerRefreshRetriesUnsupportedClientPlaceholderWithDefaultUserAgent(t *testing.T) {
+	ctx := context.Background()
+	store, err := db.Open(ctx, filepath.Join(t.TempDir(), "jnmproxy.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer store.Close()
+	if err := db.Migrate(ctx, store); err != nil {
+		t.Fatalf("migrate db: %v", err)
+	}
+
+	seenUserAgents := make(map[string]int)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenUserAgents[r.UserAgent()]++
+		if r.UserAgent() == "clash/1.18.0" {
+			_, _ = w.Write([]byte(`
+proxies:
+  - name: "不支持您的代理软件"
+    type: ss
+    server: 127.0.0.1
+    port: 6666
+    cipher: aes-128-gcm
+    password: placeholder
+  - name: "请换用支持的代理软件"
+    type: ss
+    server: 127.0.0.1
+    port: 6666
+    cipher: aes-128-gcm
+    password: placeholder
+`))
+			return
+		}
+		if r.UserAgent() != DefaultUserAgent {
+			t.Fatalf("unexpected fallback user agent: %s", r.UserAgent())
+		}
+		_, _ = w.Write([]byte(`
+proxies:
+  - name: "真实节点 01"
+    type: ss
+    server: real-1.example.com
+    port: 8388
+    cipher: aes-128-gcm
+    password: pass
+  - name: "真实节点 02"
+    type: vless
+    server: real-2.example.com
+    port: 443
+    uuid: 00000000-0000-0000-0000-000000000000
+`))
+	}))
+	defer server.Close()
+
+	repo := repository.NewSubscriptionRepository(store)
+	subscription, err := repo.Create(ctx, repository.CreateSubscriptionParams{
+		Name:                   "fallback",
+		URL:                    server.URL,
+		UserAgent:              "clash/1.18.0",
+		RefreshIntervalSeconds: 60,
+		Enabled:                true,
+	})
+	if err != nil {
+		t.Fatalf("create subscription: %v", err)
+	}
+
+	manager := NewManager(repo, ManagerOptions{
+		RequestTimeout: 2 * time.Second,
+		SingBoxBuilder: func(node ParsedNode) SingBoxBuildResult {
+			return SingBoxBuildResult{Status: "supported", JSON: `{"type":"direct"}`}
+		},
+	})
+	result, err := manager.Refresh(ctx, subscription.ID)
+	if err != nil {
+		t.Fatalf("refresh subscription: %v", err)
+	}
+	if result.NodeCount != 2 {
+		t.Fatalf("expected fallback real nodes, got %#v", result)
+	}
+	if seenUserAgents["clash/1.18.0"] != 1 || seenUserAgents[DefaultUserAgent] != 1 {
+		t.Fatalf("expected old UA and default UA requests, got %#v", seenUserAgents)
+	}
+	nodes, err := repo.ListNodesBySubscription(ctx, subscription.ID)
+	if err != nil {
+		t.Fatalf("list nodes: %v", err)
+	}
+	if len(nodes) != 2 || nodes[0].Server == "127.0.0.1" || nodes[1].Server == "127.0.0.1" {
+		t.Fatalf("expected real nodes to be persisted, got %#v", nodes)
+	}
+}
+
+func TestLooksLikeUnsupportedClientNodes(t *testing.T) {
+	if !looksLikeUnsupportedClientNodes([]ParsedNode{
+		{Name: "不支持您的代理软件", Server: "127.0.0.1", Port: 6666},
+		{Name: "请换用支持的代理软件", Server: "localhost", Port: 6666},
+	}) {
+		t.Fatal("expected unsupported-client placeholder to be detected")
+	}
+	if looksLikeUnsupportedClientNodes([]ParsedNode{
+		{Name: "本地测试节点", Server: "127.0.0.1", Port: 1080},
+	}) {
+		t.Fatal("ordinary local node should not be treated as unsupported-client placeholder")
+	}
+}
+
 func TestManagerRefreshPersistsSingBoxFieldsAndStats(t *testing.T) {
 	ctx := context.Background()
 	store, err := db.Open(ctx, filepath.Join(t.TempDir(), "jnmproxy.db"))

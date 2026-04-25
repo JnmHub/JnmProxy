@@ -16,6 +16,7 @@ func TestBuildOutboundForCoreProtocols(t *testing.T) {
 		uri           string
 		wantType      string
 		wantTransport string
+		requiresUTLS  bool
 	}{
 		{
 			name:     "shadowsocks",
@@ -27,6 +28,7 @@ func TestBuildOutboundForCoreProtocols(t *testing.T) {
 			uri:           "vless://00000000-0000-0000-0000-000000000000@vless.example.com:443?security=reality&pbk=public-key&sid=abcd&type=ws&path=%2Fws#VLESS",
 			wantType:      "vless",
 			wantTransport: "ws",
+			requiresUTLS:  true,
 		},
 		{
 			name:          "trojan grpc",
@@ -56,6 +58,12 @@ func TestBuildOutboundForCoreProtocols(t *testing.T) {
 			if requiresQUIC(normalizeProtocol(node.Protocol)) && !QUICEnabled() {
 				if result.Status != "error" {
 					t.Fatalf("expected QUIC protocol to require with_quic, got %#v", result)
+				}
+				return
+			}
+			if tc.requiresUTLS && !UTLSEnabled() {
+				if result.Status != "error" {
+					t.Fatalf("expected uTLS protocol to require with_utls, got %#v", result)
 				}
 				return
 			}
@@ -106,6 +114,59 @@ proxies:
 		t.Fatalf("expected ws transport, got %s", result.TransportType)
 	}
 	assertValidOutboundJSON(t, result.JSON)
+}
+
+func TestBuildOutboundForVLESSClashWebSocketHeaders(t *testing.T) {
+	nodes, err := subscription.ParseNodes([]byte(`
+proxies:
+  - name: "vless ws host"
+    type: vless
+    server: 203.0.113.1
+    port: 443
+    uuid: 00000000-0000-0000-0000-000000000000
+    tls: true
+    network: ws
+    ws-opts:
+      path: /pq/jp1
+      headers:
+        Host: edge.example.com
+`))
+	if err != nil {
+		t.Fatalf("parse clash yaml: %v", err)
+	}
+	result := BuildOutbound(11, nodes[0])
+	if result.Status != "supported" {
+		t.Fatalf("expected supported result, got %#v", result)
+	}
+	assertValidOutboundJSON(t, result.JSON)
+	var outbound map[string]any
+	if err := json.Unmarshal([]byte(result.JSON), &outbound); err != nil {
+		t.Fatalf("decode outbound json: %v", err)
+	}
+	tlsOptions := outbound["tls"].(map[string]any)
+	if tlsOptions["server_name"] != "edge.example.com" {
+		t.Fatalf("expected ws Host to be reused as TLS server_name, got %#v", tlsOptions)
+	}
+	transport := outbound["transport"].(map[string]any)
+	headers := transport["headers"].(map[string]any)
+	hostValues := headers["Host"].([]any)
+	if len(hostValues) != 1 || hostValues[0] != "edge.example.com" {
+		t.Fatalf("expected ws Host header, got %#v", transport)
+	}
+}
+
+func TestBuildOutboundRequiresUTLSTag(t *testing.T) {
+	if UTLSEnabled() {
+		t.Skip("without with_utls only")
+	}
+	node, err := subscription.ParseNodeURI("vless://00000000-0000-0000-0000-000000000000@example.com:443?security=reality&pbk=public-key&sid=abcd#VLESS")
+	if err != nil {
+		t.Fatalf("parse uri: %v", err)
+	}
+	result := BuildOutbound(12, node)
+	if result.Status != "error" || result.Error == "" {
+		t.Fatalf("expected with_utls error, got %#v", result)
+	}
 }
 
 func TestBuildOutboundRejectsUnsupportedProtocol(t *testing.T) {
