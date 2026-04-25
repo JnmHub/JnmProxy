@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-
-	_ "github.com/mattn/go-sqlite3"
 )
 
 func Open(ctx context.Context, path string) (*sql.DB, error) {
@@ -24,8 +22,8 @@ func Open(ctx context.Context, path string) (*sql.DB, error) {
 		}
 	}
 
-	dsn := fmt.Sprintf("file:%s?_foreign_keys=on&_busy_timeout=5000&_journal_mode=WAL", path)
-	store, err := sql.Open("sqlite3", dsn)
+	dsn := fmt.Sprintf("file:%s", path)
+	store, err := sql.Open(sqliteDriverName(), dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
@@ -35,5 +33,24 @@ func Open(ctx context.Context, path string) (*sql.DB, error) {
 		_ = store.Close()
 		return nil, fmt.Errorf("ping sqlite: %w", err)
 	}
+	if err := configureSQLite(ctx, store, path); err != nil {
+		_ = store.Close()
+		return nil, err
+	}
 	return store, nil
+}
+
+func configureSQLite(ctx context.Context, store *sql.DB, path string) error {
+	if _, err := store.ExecContext(ctx, "PRAGMA foreign_keys = ON"); err != nil {
+		return fmt.Errorf("enable sqlite foreign keys: %w", err)
+	}
+	if _, err := store.ExecContext(ctx, "PRAGMA busy_timeout = 5000"); err != nil {
+		return fmt.Errorf("set sqlite busy timeout: %w", err)
+	}
+	if path != ":memory:" {
+		if _, err := store.ExecContext(ctx, "PRAGMA journal_mode = WAL"); err != nil {
+			return fmt.Errorf("set sqlite journal mode: %w", err)
+		}
+	}
+	return nil
 }

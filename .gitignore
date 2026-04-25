@@ -3,6 +3,7 @@
 
 /bin/
 /data/
+/release/
 /tmp/
 /web/dist/
 /web/node_modules/
