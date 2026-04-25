@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { Search } from 'lucide-react';
 import { useDeferredValue, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { listOperationLogs } from '../api/operationLogs';
 import type { OperationLog } from '../api/types';
 import { Badge } from '../components/ui/Badge';
@@ -12,7 +13,9 @@ import { DataTable } from '../components/ui/Table';
 import { formatTime } from '../utils/format';
 
 export function OperationLogsPage() {
-  const [search, setSearch] = useState('');
+  const [params] = useSearchParams();
+  const searchParam = params.get('search') ?? '';
+  const [search, setSearch] = useState(searchParam);
   const deferredSearch = useDeferredValue(search.trim());
   const [action, setAction] = useState('');
   const [targetType, setTargetType] = useState('');
@@ -36,6 +39,11 @@ export function OperationLogsPage() {
       setPage(totalPages);
     }
   }, [page, totalPages]);
+
+  useEffect(() => {
+    setSearch(searchParam);
+    setPage(1);
+  }, [searchParam]);
 
   const resetPage = () => {
     setPage(1);

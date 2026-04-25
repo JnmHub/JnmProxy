@@ -104,6 +104,7 @@ func main() {
 	healthRepo := repository.NewHealthRepository(store)
 	statsRepo := repository.NewStatsRepository(store)
 	operationLogRepo := repository.NewOperationLogRepository(store)
+	searchRepo := repository.NewSearchRepository(store)
 	authService := auth.NewService(credentialRepo)
 	groupingService := grouping.NewService(groupRepo)
 	subscriptionManager := subscription.NewManager(subscriptionRepo, subscription.ManagerOptions{
@@ -133,6 +134,7 @@ func main() {
 		HealthRepo:          healthRepo,
 		StatsRepo:           statsRepo,
 		OperationLogRepo:    operationLogRepo,
+		SearchRepo:          searchRepo,
 		SubscriptionManager: subscriptionManager,
 		AuthService:         authService,
 		GroupingService:     groupingService,

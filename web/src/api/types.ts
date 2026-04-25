@@ -179,3 +179,16 @@ export interface OperationLogPage {
   page: number;
   page_size: number;
 }
+
+export interface SearchItem {
+  type: 'node' | 'subscription' | 'group' | 'credential' | 'operation_log' | string;
+  id: number;
+  title: string;
+  subtitle: string;
+  url: string;
+}
+
+export interface SearchResult {
+  query: string;
+  items: SearchItem[];
+}

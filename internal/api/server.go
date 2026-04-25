@@ -32,6 +32,7 @@ type Server struct {
 	HealthRepo             *repository.HealthRepository
 	StatsRepo              *repository.StatsRepository
 	OperationLogRepo       *repository.OperationLogRepository
+	SearchRepo             *repository.SearchRepository
 	SubscriptionManager    *subscription.Manager
 	AuthService            *auth.Service
 	GroupingService        *grouping.Service
@@ -78,6 +79,8 @@ func (server *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		server.handleNodes(w, r, segments)
 	case "operation-logs":
 		server.handleOperationLogs(w, r, segments)
+	case "search":
+		server.handleSearch(w, r, segments)
 	case "groups":
 		server.handleGroups(w, r, segments)
 	case "group-keywords":
@@ -621,6 +624,19 @@ func (server *Server) handleOperationLogs(w http.ResponseWriter, r *http.Request
 		PageSize:   queryIntDefault(r, "page_size", 50),
 	}
 	result, err := server.OperationLogRepo.List(r.Context(), filter)
+	writeResult(w, result, err)
+}
+
+func (server *Server) handleSearch(w http.ResponseWriter, r *http.Request, segments []string) {
+	if len(segments) != 1 || r.Method != http.MethodGet {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	if server.SearchRepo == nil {
+		writeResult(w, &model.SearchResult{Query: r.URL.Query().Get("q"), Items: []model.SearchItem{}}, nil)
+		return
+	}
+	result, err := server.SearchRepo.Search(r.Context(), r.URL.Query().Get("q"))
 	writeResult(w, result, err)
 }
 

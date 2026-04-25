@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Edit3, Plus, Trash2 } from 'lucide-react';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { addNodesToGroup, createGroup, deleteGroup, listGroups, removeNodesFromGroup, updateGroup, type GroupInput } from '../api/groups';
 import { listNodes } from '../api/nodes';
 import type { ProxyGroup, ProxyNode } from '../api/types';
@@ -19,6 +20,8 @@ const defaultForm: GroupInput = { name: '', description: '', auto_created: false
 
 export function GroupsPage() {
   const queryClient = useQueryClient();
+  const [params] = useSearchParams();
+  const search = params.get('search')?.trim().toLowerCase() ?? '';
   const [open, setOpen] = useState(false);
   const [editingID, setEditingID] = useState<number | null>(null);
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
@@ -45,15 +48,20 @@ export function GroupsPage() {
   const submit = () => editingID ? updateMutation.mutate({ id: editingID, input: form }) : createMutation.mutate(form);
   const groupNodes = groupNodesQuery.data ?? [];
   const availableNodes = (allNodesQuery.data ?? []).filter((node) => !groupNodes.some((groupNode) => groupNode.id === node.id));
+  const groups = useMemo(() => {
+    const items = groupsQuery.data ?? [];
+    if (!search) return items;
+    return items.filter((group) => [group.name, group.description].some((value) => value.toLowerCase().includes(search)));
+  }, [groupsQuery.data, search]);
 
   return (
     <div className="space-y-6">
       <div><p className="text-sm text-blue-300">Groups</p><h1 className="mt-2 text-3xl font-semibold text-white">分组管理</h1></div>
       <Card>
-        <CardHeader title="分组列表" description="节点可以属于多个分组，凭证也可以绑定分组。" action={<Button variant="primary" onClick={openCreate}><Plus className="h-4 w-4" />创建分组</Button>} />
+        <CardHeader title="分组列表" description={search ? `搜索「${params.get('search')}」的分组结果。` : '节点可以属于多个分组，凭证也可以绑定分组。'} action={<Button variant="primary" onClick={openCreate}><Plus className="h-4 w-4" />创建分组</Button>} />
         {groupsQuery.isLoading ? <LoadingState /> : (
-          <DataTable columns={['名称', '描述', '来源', '时间', '操作']} empty={!groupsQuery.data?.length}>
-            {(groupsQuery.data ?? []).map((group) => <tr key={group.id}><td className="px-4 py-3"><button className="font-medium text-blue-200 hover:text-blue-100" onClick={() => setDetailGroup(group)}>{group.name}</button></td><td className="px-4 py-3 text-slate-400">{group.description || '—'}</td><td className="px-4 py-3"><Badge value={group.auto_created ? 'supported' : 'unknown'}>{group.auto_created ? '自动创建' : '手动创建'}</Badge></td><td className="px-4 py-3 text-xs text-slate-500">{formatTime(group.updated_at)}</td><td className="px-4 py-3"><div className="flex flex-wrap gap-2"><Button onClick={() => setDetailGroup(group)}>节点</Button><Button onClick={() => openEdit(group)}><Edit3 className="h-4 w-4" />编辑</Button><Button variant="danger" onClick={() => setConfirm({ title: '删除分组', message: `确定删除分组「${group.name}」吗？节点不会删除，只会解除分组关系。`, danger: true, confirmText: '删除', onConfirm: () => deleteMutation.mutate(group.id) })}><Trash2 className="h-4 w-4" />删除</Button></div></td></tr>)}
+          <DataTable columns={['名称', '描述', '来源', '时间', '操作']} empty={!groups.length}>
+            {groups.map((group) => <tr key={group.id}><td className="px-4 py-3"><button className="font-medium text-blue-200 hover:text-blue-100" onClick={() => setDetailGroup(group)}>{group.name}</button></td><td className="px-4 py-3 text-slate-400">{group.description || '—'}</td><td className="px-4 py-3"><Badge value={group.auto_created ? 'supported' : 'unknown'}>{group.auto_created ? '自动创建' : '手动创建'}</Badge></td><td className="px-4 py-3 text-xs text-slate-500">{formatTime(group.updated_at)}</td><td className="px-4 py-3"><div className="flex flex-wrap gap-2"><Button onClick={() => setDetailGroup(group)}>节点</Button><Button onClick={() => openEdit(group)}><Edit3 className="h-4 w-4" />编辑</Button><Button variant="danger" onClick={() => setConfirm({ title: '删除分组', message: `确定删除分组「${group.name}」吗？节点不会删除，只会解除分组关系。`, danger: true, confirmText: '删除', onConfirm: () => deleteMutation.mutate(group.id) })}><Trash2 className="h-4 w-4" />删除</Button></div></td></tr>)}
           </DataTable>
         )}
       </Card>

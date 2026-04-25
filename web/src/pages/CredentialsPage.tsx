@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Copy, KeyRound, Plus, Terminal, Trash2 } from 'lucide-react';
 import { useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { createCredential, deleteCredential, listCredentials, resetCredentialPassword, updateCredential, type CredentialInput, type CredentialUpdateInput } from '../api/credentials';
 import { listGroups } from '../api/groups';
 import { listNodes } from '../api/nodes';
@@ -48,6 +49,8 @@ const defaultEditForm: ScopeForm = {
 
 export function CredentialsPage() {
   const queryClient = useQueryClient();
+  const [params] = useSearchParams();
+  const search = params.get('search')?.trim().toLowerCase() ?? '';
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState<CreateForm>(defaultCreateForm);
   const [resetID, setResetID] = useState<number>(0);
@@ -64,6 +67,11 @@ export function CredentialsPage() {
 
   const groupNames = useMemo(() => new Map((groupsQuery.data ?? []).map((group) => [group.id, group.name])), [groupsQuery.data]);
   const nodeNames = useMemo(() => new Map((nodesQuery.data ?? []).map((node) => [node.id, node.name])), [nodesQuery.data]);
+  const credentials = useMemo(() => {
+    const items = credentialsQuery.data ?? [];
+    if (!search) return items;
+    return items.filter((credential) => [credential.username, credential.remark, credential.bind_mode, credential.selection_policy].some((value) => value.toLowerCase().includes(search)));
+  }, [credentialsQuery.data, search]);
 
   const invalidateCredentials = () => { void queryClient.invalidateQueries({ queryKey: ['credentials'] }); };
   const createMutation = useMutation({
@@ -132,10 +140,10 @@ export function CredentialsPage() {
     <div className="space-y-6">
       <div><p className="text-sm text-blue-300">Credentials</p><h1 className="mt-2 text-3xl font-semibold text-white">凭证管理</h1></div>
       <Card>
-        <CardHeader title="代理访问凭证" description="客户端使用 HTTP/SOCKS5 代理时必须携带这里创建的账号密码。绑定范围现在直接显示目标名称。" action={<Button variant="primary" onClick={openCreate}><Plus className="h-4 w-4" />创建凭证</Button>} />
+        <CardHeader title="代理访问凭证" description={search ? `搜索「${params.get('search')}」的凭证结果。` : '客户端使用 HTTP/SOCKS5 代理时必须携带这里创建的账号密码。绑定范围现在直接显示目标名称。'} action={<Button variant="primary" onClick={openCreate}><Plus className="h-4 w-4" />创建凭证</Button>} />
         {credentialsQuery.isLoading ? <LoadingState /> : (
-          <DataTable columns={['用户名', '状态', '绑定', '策略', '备注', '时间', '操作']} empty={!credentialsQuery.data?.length}>
-            {(credentialsQuery.data ?? []).map((credential) => (
+          <DataTable columns={['用户名', '状态', '绑定', '策略', '备注', '时间', '操作']} empty={!credentials.length}>
+            {credentials.map((credential) => (
               <tr key={credential.id}>
                 <td className="px-4 py-3 font-mono text-blue-200">{credential.username}</td>
                 <td className="px-4 py-3"><Badge value={credential.enabled ? 'supported' : 'unsupported'}>{credential.enabled ? '启用' : '禁用'}</Badge></td>

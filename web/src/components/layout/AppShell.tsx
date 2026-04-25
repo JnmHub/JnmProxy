@@ -1,8 +1,11 @@
-import { Activity, BarChart3, FileText, FolderKanban, Gauge, KeyRound, Menu, Network, Rss, Search, ServerCog, Settings, Tags, X } from 'lucide-react';
-import { useState } from 'react';
-import { NavLink, Outlet } from 'react-router-dom';
+import { Activity, BarChart3, Command, FileText, FolderKanban, Gauge, KeyRound, Loader2, Menu, Network, Rss, Search, ServerCog, Settings, Tags, X } from 'lucide-react';
+import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
+import { globalSearch } from '../../api/search';
 import { getSingBoxStatus, getSystemHealth } from '../../api/system';
+import type { SearchItem } from '../../api/types';
 import { Button } from '../ui/Button';
 
 const navItems = [
@@ -48,10 +51,7 @@ export function AppShell() {
             <Button variant="ghost" className="px-2 lg:hidden" onClick={() => setMobileOpen(true)} aria-label="打开菜单">
               <Menu className="h-5 w-5" />
             </Button>
-            <div className="hidden min-w-0 items-center gap-3 rounded-2xl border border-slate-800 bg-slate-900/70 px-4 py-2 text-slate-400 md:flex">
-              <Search className="h-4 w-4" />
-              <span className="text-sm">搜索节点、订阅、分组（后续接入）</span>
-            </div>
+            <GlobalSearchBox />
             <div className="flex flex-1 items-center gap-3 lg:hidden">
               <Activity className="h-6 w-6 text-blue-300" />
               <span className="font-mono font-semibold">JnmProxy</span>
@@ -67,6 +67,126 @@ export function AppShell() {
           <Outlet />
         </main>
       </div>
+    </div>
+  );
+}
+
+function GlobalSearchBox() {
+  const navigate = useNavigate();
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [activeIndex, setActiveIndex] = useState(0);
+  const deferredQuery = useDeferredValue(query.trim());
+  const searchQuery = useQuery({
+    queryKey: ['global-search', deferredQuery],
+    queryFn: () => globalSearch(deferredQuery),
+    enabled: open && deferredQuery.length > 0,
+  });
+  const items = useMemo(() => searchQuery.data?.items ?? [], [searchQuery.data]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const typing = target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.isContentEditable;
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        setOpen(true);
+        setTimeout(() => inputRef.current?.focus(), 0);
+        return;
+      }
+      if (!typing && event.key === '/') {
+        event.preventDefault();
+        setOpen(true);
+        setTimeout(() => inputRef.current?.focus(), 0);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
+
+  useEffect(() => {
+    setActiveIndex(0);
+  }, [deferredQuery]);
+
+  useEffect(() => {
+    setActiveIndex((index) => Math.min(index, Math.max(items.length - 1, 0)));
+  }, [items.length]);
+
+  const go = (item: SearchItem) => {
+    navigate(item.url);
+    setOpen(false);
+    setQuery('');
+  };
+
+  const handleKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Escape') {
+      setOpen(false);
+      inputRef.current?.blur();
+      return;
+    }
+    if (!items.length) return;
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      setActiveIndex((index) => (index + 1) % items.length);
+      return;
+    }
+    if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      setActiveIndex((index) => (index - 1 + items.length) % items.length);
+      return;
+    }
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      const item = items[activeIndex] ?? items[0];
+      go(item);
+    }
+  };
+
+  return (
+    <div className="relative hidden min-w-0 flex-1 max-w-2xl md:block">
+      <div className="flex items-center gap-3 rounded-2xl border border-slate-800 bg-slate-900/70 px-4 py-2 text-slate-400 transition-colors focus-within:border-blue-400/60 focus-within:ring-2 focus-within:ring-blue-500/20">
+        <Search className="h-4 w-4 shrink-0" />
+        <input
+          ref={inputRef}
+          value={query}
+          onFocus={() => setOpen(true)}
+          onChange={(event) => { setQuery(event.target.value); setOpen(true); }}
+          onKeyDown={handleKeyDown}
+          placeholder="搜索节点、订阅、分组、凭证、日志"
+          className="min-w-0 flex-1 bg-transparent text-sm text-slate-100 outline-none placeholder:text-slate-500"
+        />
+        {searchQuery.isFetching ? <Loader2 className="h-4 w-4 animate-spin text-blue-300" /> : <span className="rounded-lg border border-slate-700 px-2 py-0.5 font-mono text-[10px] text-slate-500">Ctrl K</span>}
+      </div>
+      {open ? (
+        <div className="absolute left-0 right-0 top-12 z-50 overflow-hidden rounded-2xl border border-slate-800 bg-slate-950 shadow-2xl shadow-black/40">
+          {deferredQuery ? (
+            <div className="max-h-96 overflow-y-auto p-2">
+              {items.length ? items.map((item, index) => (
+                <button
+                  key={`${item.type}-${item.id}`}
+                  type="button"
+                  onMouseDown={(event) => { event.preventDefault(); go(item); }}
+                  onMouseEnter={() => setActiveIndex(index)}
+                  className={`flex w-full items-start gap-3 rounded-xl px-3 py-3 text-left transition-colors ${activeIndex === index ? 'bg-blue-500/15 text-blue-100' : 'text-slate-300 hover:bg-slate-900'}`}
+                >
+                  <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-slate-800 bg-slate-900 text-blue-300">
+                    <Command className="h-4 w-4" />
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-medium">{item.title}</span>
+                    <span className="mt-1 block truncate text-xs text-slate-500">{item.subtitle}</span>
+                  </span>
+                </button>
+              )) : (
+                <div className="px-4 py-8 text-center text-sm text-slate-500">没有匹配结果</div>
+              )}
+            </div>
+          ) : (
+            <div className="px-4 py-5 text-sm text-slate-500">输入关键词搜索节点、订阅、分组、凭证和日志。</div>
+          )}
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -111,6 +111,12 @@ proxies:
 		t.Fatalf("expected sing-box status filter to return nodes")
 	}
 
+	searchResult := getJSON(t, handler, "/api/v1/search?q=%E9%A6%99%E6%B8%AF").(map[string]any)
+	searchItems := searchResult["items"].([]any)
+	if len(searchItems) == 0 {
+		t.Fatalf("expected global search to return items: %#v", searchResult)
+	}
+
 	credential := postJSON(t, handler, "/api/v1/credentials", map[string]any{
 		"username":         "user",
 		"password":         "pass",
@@ -190,6 +196,7 @@ func newTestServer(t *testing.T, store *sql.DB) *Server {
 		HealthRepo:          repository.NewHealthRepository(store),
 		StatsRepo:           repository.NewStatsRepository(store),
 		OperationLogRepo:    repository.NewOperationLogRepository(store),
+		SearchRepo:          repository.NewSearchRepository(store),
 		SubscriptionManager: subscription.NewManager(subRepo, subscription.ManagerOptions{RequestTimeout: 2 * time.Second}),
 		AuthService:         auth.NewService(credentialRepo),
 		GroupingService:     grouping.NewService(groupRepo),

@@ -21,7 +21,8 @@ import { statusLabel } from '../utils/status';
 
 export function NodesPage() {
   const [params] = useSearchParams();
-  const [search, setSearch] = useState('');
+  const searchParam = params.get('search') ?? '';
+  const [search, setSearch] = useState(searchParam);
   const deferredSearch = useDeferredValue(search.trim());
   const [region, setRegion] = useState('');
   const [page, setPage] = useState(1);
@@ -72,6 +73,12 @@ export function NodesPage() {
       setPage(totalPages);
     }
   }, [page, totalPages]);
+
+  useEffect(() => {
+    setSearch(searchParam);
+    setPage(1);
+    setSelected([]);
+  }, [searchParam]);
 
   const updateFilter = (next: NodeFilter) => {
     setFilter(next);
