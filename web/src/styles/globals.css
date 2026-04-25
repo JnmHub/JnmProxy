@@ -1,0 +1,52 @@
+@import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Fira+Sans:wght@300;400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  background: #020617;
+  color: #e5e7eb;
+  font-family: 'Fira Sans', ui-sans-serif, system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at top left, rgba(59, 130, 246, 0.18), transparent 34rem),
+    radial-gradient(circle at bottom right, rgba(245, 158, 11, 0.12), transparent 30rem),
+    #020617;
+}
+
+button,
+a,
+[role='button'] {
+  cursor: pointer;
+}
+
+code,
+.mono {
+  font-family: 'Fira Code', ui-monospace, SFMono-Regular, monospace;
+}
+
+::selection {
+  background: rgba(59, 130, 246, 0.45);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}
