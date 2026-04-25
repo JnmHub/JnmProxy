@@ -115,7 +115,7 @@ func ParseNodeURI(rawURI string) (ParsedNode, error) {
 		return parseVMessURI(rawURI)
 	case "ss":
 		return parseShadowsocksURI(rawURI)
-	case "trojan", "vless", "socks", "socks5", "socks5h", "http", "https":
+	case "trojan", "vless", "hysteria2", "hy2", "tuic", "socks", "socks5", "socks5h", "http", "https":
 		return parseGenericURI(rawURI, scheme)
 	default:
 		return ParsedNode{}, fmt.Errorf("unsupported uri scheme %q", scheme)
@@ -193,6 +193,9 @@ func parseShadowsocksURI(rawURI string) (ParsedNode, error) {
 		name = server
 	}
 
+	identity := candidate[:at]
+	method, password, _ := strings.Cut(identity, ":")
+
 	return ParsedNode{
 		Name:     name,
 		Protocol: "ss",
@@ -201,7 +204,9 @@ func parseShadowsocksURI(rawURI string) (ParsedNode, error) {
 		RawURI:   rawURI,
 		RawConfig: map[string]any{
 			"uri":      rawURI,
-			"identity": candidate[:at],
+			"identity": identity,
+			"method":   method,
+			"password": password,
 		},
 	}, nil
 }
@@ -299,6 +304,8 @@ func normalizeProtocol(protocol string) string {
 	switch strings.ToLower(protocol) {
 	case "socks", "socks5h":
 		return "socks5"
+	case "hy2":
+		return "hysteria2"
 	default:
 		return strings.ToLower(protocol)
 	}
