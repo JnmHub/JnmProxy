@@ -94,6 +94,20 @@ proxies:
 	if _, ok := credential["PasswordHash"]; ok {
 		t.Fatalf("credential response leaked password hash: %#v", credential)
 	}
+	if _, ok := credential["password_hash"]; ok {
+		t.Fatalf("credential response leaked password hash: %#v", credential)
+	}
+	if credential["selection_policy"] != "random" {
+		t.Fatalf("expected group binding to normalize to random policy: %#v", credential)
+	}
+	bindings := credential["bindings"].([]any)
+	if len(bindings) != 1 {
+		t.Fatalf("expected one credential binding: %#v", credential)
+	}
+	binding := bindings[0].(map[string]any)
+	if binding["target_type"] != "group" || int64(binding["target_id"].(float64)) != groupID {
+		t.Fatalf("unexpected credential binding: %#v", credential)
+	}
 
 	overview := getJSON(t, handler, "/api/v1/stats/overview").(map[string]any)
 	if overview["connections"].(float64) != 0 {

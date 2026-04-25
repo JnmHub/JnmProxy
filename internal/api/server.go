@@ -13,6 +13,7 @@ import (
 	"github.com/jnmproxy/jnmproxy/internal/auth"
 	"github.com/jnmproxy/jnmproxy/internal/cache"
 	"github.com/jnmproxy/jnmproxy/internal/grouping"
+	"github.com/jnmproxy/jnmproxy/internal/model"
 	"github.com/jnmproxy/jnmproxy/internal/repository"
 	"github.com/jnmproxy/jnmproxy/internal/scheduler"
 	"github.com/jnmproxy/jnmproxy/internal/stats"
@@ -393,7 +394,7 @@ func (server *Server) handleCredentials(w http.ResponseWriter, r *http.Request, 
 	if len(segments) == 1 {
 		switch r.Method {
 		case http.MethodGet:
-			items, err := server.CredentialRepo.List(ctx)
+			items, err := server.listCredentialResponses(ctx)
 			writeResult(w, items, err)
 		case http.MethodPost:
 			var input credentialInput
@@ -409,7 +410,7 @@ func (server *Server) handleCredentials(w http.ResponseWriter, r *http.Request, 
 				SelectionPolicy: input.SelectionPolicy, Remark: input.Remark, Bindings: input.Bindings,
 			})
 			server.reloadCache(ctx)
-			writeResult(w, item, err)
+			server.writeCredentialResult(w, ctx, item, err)
 		default:
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		}
@@ -436,7 +437,7 @@ func (server *Server) handleCredentials(w http.ResponseWriter, r *http.Request, 
 	switch r.Method {
 	case http.MethodGet:
 		item, err := server.CredentialRepo.Get(ctx, id)
-		writeResult(w, item, err)
+		server.writeCredentialResult(w, ctx, item, err)
 	case http.MethodPut:
 		var input credentialUpdateInput
 		if !decodeRequest(w, r, &input) {
@@ -447,7 +448,7 @@ func (server *Server) handleCredentials(w http.ResponseWriter, r *http.Request, 
 			Remark: input.Remark, Bindings: input.Bindings,
 		})
 		server.reloadCache(ctx)
-		writeResult(w, item, err)
+		server.writeCredentialResult(w, ctx, item, err)
 	case http.MethodDelete:
 		err := server.CredentialRepo.Delete(ctx, id)
 		server.reloadCache(ctx)
@@ -467,6 +468,72 @@ func (server *Server) handleStats(w http.ResponseWriter, r *http.Request, segmen
 		return
 	}
 	writeError(w, http.StatusNotFound, "not found")
+}
+
+type credentialResponse struct {
+	ID              int64                                `json:"id"`
+	Username        string                               `json:"username"`
+	Enabled         bool                                 `json:"enabled"`
+	BindMode        model.CredentialBindMode             `json:"bind_mode"`
+	SelectionPolicy model.SelectionPolicy                `json:"selection_policy"`
+	Remark          string                               `json:"remark"`
+	Bindings        []repository.CredentialBindingTarget `json:"bindings"`
+	CreatedAt       string                               `json:"created_at"`
+	UpdatedAt       string                               `json:"updated_at"`
+}
+
+func (server *Server) listCredentialResponses(ctx context.Context) ([]credentialResponse, error) {
+	items, err := server.CredentialRepo.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	responses := make([]credentialResponse, 0, len(items))
+	for _, item := range items {
+		response, err := server.credentialResponse(ctx, &item)
+		if err != nil {
+			return nil, err
+		}
+		responses = append(responses, *response)
+	}
+	return responses, nil
+}
+
+func (server *Server) writeCredentialResult(w http.ResponseWriter, ctx context.Context, item *model.Credential, err error) {
+	if err != nil {
+		writeResult(w, item, err)
+		return
+	}
+	response, err := server.credentialResponse(ctx, item)
+	writeResult(w, response, err)
+}
+
+func (server *Server) credentialResponse(ctx context.Context, item *model.Credential) (*credentialResponse, error) {
+	bindings, err := server.CredentialRepo.ListBindings(ctx, item.ID)
+	if err != nil {
+		return nil, err
+	}
+	return &credentialResponse{
+		ID:              item.ID,
+		Username:        item.Username,
+		Enabled:         item.Enabled,
+		BindMode:        item.BindMode,
+		SelectionPolicy: item.SelectionPolicy,
+		Remark:          item.Remark,
+		Bindings:        credentialBindingTargets(bindings),
+		CreatedAt:       item.CreatedAt,
+		UpdatedAt:       item.UpdatedAt,
+	}, nil
+}
+
+func credentialBindingTargets(bindings []model.CredentialBinding) []repository.CredentialBindingTarget {
+	targets := make([]repository.CredentialBindingTarget, 0, len(bindings))
+	for _, binding := range bindings {
+		targets = append(targets, repository.CredentialBindingTarget{
+			TargetType: binding.TargetType,
+			TargetID:   binding.TargetID,
+		})
+	}
+	return targets
 }
 
 func (server *Server) handleNodeBatch(ctx context.Context, input nodeBatchInput) error {
