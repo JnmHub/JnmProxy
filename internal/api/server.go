@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -36,6 +37,7 @@ type Server struct {
 	StatsCollector         *stats.Collector
 	SingBoxStatus          *SingBoxStatus
 	NodeAdapterInvalidator func(nodeID int64)
+	AdminToken             string
 }
 
 type SingBoxStatus struct {
@@ -57,6 +59,9 @@ type SingBoxStatus struct {
 }
 
 func (server *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if !server.authorizeAdmin(w, r) {
+		return
+	}
 	segments := pathSegments(r.URL.Path)
 	if len(segments) == 0 {
 		writeError(w, http.StatusNotFound, "not found")
@@ -80,6 +85,24 @@ func (server *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeError(w, http.StatusNotFound, "not found")
 	}
+}
+
+func (server *Server) authorizeAdmin(w http.ResponseWriter, r *http.Request) bool {
+	if server.AdminToken == "" {
+		return true
+	}
+	const prefix = "Bearer "
+	header := r.Header.Get("Authorization")
+	if !strings.HasPrefix(header, prefix) {
+		writeError(w, http.StatusUnauthorized, "admin token is required")
+		return false
+	}
+	token := strings.TrimSpace(strings.TrimPrefix(header, prefix))
+	if subtle.ConstantTimeCompare([]byte(token), []byte(server.AdminToken)) != 1 {
+		writeError(w, http.StatusUnauthorized, "invalid admin token")
+		return false
+	}
+	return true
 }
 
 func (server *Server) handleSystem(w http.ResponseWriter, r *http.Request, segments []string) {

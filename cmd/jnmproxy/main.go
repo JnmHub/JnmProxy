@@ -153,6 +153,7 @@ func main() {
 			License:                  "GPL via github.com/sagernet/sing-box",
 		},
 		NodeAdapterInvalidator: singBoxNodeInvalidator,
+		AdminToken:             cfg.Admin.Token,
 	}
 	webHandler, err := webui.NewHandler(apiHandler)
 	if err != nil {

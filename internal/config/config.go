@@ -17,6 +17,7 @@ type Config struct {
 	Stats        StatsConfig        `yaml:"stats"`
 	Scheduler    SchedulerConfig    `yaml:"scheduler"`
 	SingBox      SingBoxConfig      `yaml:"sing_box"`
+	Admin        AdminConfig        `yaml:"admin"`
 	Security     SecurityConfig     `yaml:"security"`
 }
 
@@ -67,6 +68,10 @@ type SecurityConfig struct {
 	RedactLogs bool `yaml:"redact_logs"`
 }
 
+type AdminConfig struct {
+	Token string `yaml:"token"`
+}
+
 func Default() Config {
 	return Config{
 		Server: ServerConfig{
@@ -104,6 +109,9 @@ func Default() Config {
 			LogLevel:                  "warn",
 			HealthCheckTarget:         "www.gstatic.com:443",
 			EnableUDP:                 false,
+		},
+		Admin: AdminConfig{
+			Token: "",
 		},
 		Security: SecurityConfig{
 			RedactLogs: true,
@@ -231,6 +239,7 @@ func applyEnv(cfg *Config) error {
 	setString("JNMPROXY_SING_BOX_MODE", &cfg.SingBox.Mode)
 	setString("JNMPROXY_SING_BOX_LOG_LEVEL", &cfg.SingBox.LogLevel)
 	setString("JNMPROXY_SING_BOX_HEALTH_CHECK_TARGET", &cfg.SingBox.HealthCheckTarget)
+	setString("JNMPROXY_ADMIN_TOKEN", &cfg.Admin.Token)
 
 	if err := setInt("JNMPROXY_SUBSCRIPTION_DEFAULT_REFRESH_INTERVAL_SECONDS", &cfg.Subscription.DefaultRefreshIntervalSeconds); err != nil {
 		return err

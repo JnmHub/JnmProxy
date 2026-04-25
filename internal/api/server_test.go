@@ -136,6 +136,24 @@ proxies:
 	}
 }
 
+func TestAdminTokenProtectsAPI(t *testing.T) {
+	handler := &Server{AdminToken: "secret"}
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/system/health", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected unauthorized without token, got %d", rec.Code)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/health", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected ok with token, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func newTestServer(t *testing.T, store *sql.DB) *Server {
 	t.Helper()
 	runtimeCache := cache.NewStore()

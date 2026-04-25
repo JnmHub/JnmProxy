@@ -41,6 +41,7 @@ subscription:
 	t.Setenv("JNMPROXY_DB_PATH", "./env.db")
 	t.Setenv("JNMPROXY_SING_BOX_MODE", "dialer")
 	t.Setenv("JNMPROXY_SING_BOX_ENABLE_UDP", "true")
+	t.Setenv("JNMPROXY_ADMIN_TOKEN", "env-token")
 
 	cfg, err := Load(path)
 	if err != nil {
@@ -60,6 +61,9 @@ subscription:
 	}
 	if !cfg.SingBox.EnableUDP {
 		t.Fatal("expected sing-box udp to be enabled by env")
+	}
+	if cfg.Admin.Token != "env-token" {
+		t.Fatalf("unexpected admin token: %s", cfg.Admin.Token)
 	}
 }
 

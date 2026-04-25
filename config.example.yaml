@@ -34,5 +34,8 @@ sing_box:
   health_check_target: "www.gstatic.com:443"
   enable_udp: false
 
+admin:
+  token: "" # 为空表示不开启管理 API 鉴权；生产环境建议设置长随机字符串
+
 security:
   redact_logs: true

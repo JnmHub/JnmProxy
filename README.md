@@ -20,6 +20,7 @@ JnmProxy 是一个 Go 代理池系统，基于机场订阅链接维护代理节�
 - 定时刷新订阅和节点健康检查已接入，健康检查可覆盖 sing-box 节点。
 - 提供 `/api/v1` 后端管理 API。
 - Go 后端会托管内嵌的前端管理后台，访问 `http://127.0.0.1:8080/` 即可打开页面。
+- 管理 API 支持可选 Bearer Token；`admin.token` 为空时保持本地开发友好模式。
 
 ## 本地启动
 
@@ -92,6 +93,12 @@ curl -X POST http://127.0.0.1:8080/api/v1/subscriptions/1/refresh
 curl http://127.0.0.1:8080/api/v1/system/sing-box
 ```
 
+如果配置了 `admin.token`，管理 API 需要携带：
+
+```bash
+curl -H "Authorization: Bearer <你的token>" http://127.0.0.1:8080/api/v1/system/health
+```
+
 重建单个节点的 sing-box 适配器：
 
 ```bash
@@ -127,7 +134,7 @@ curl --proxy socks5h://15376259491:00hhg5210@127.0.0.1:1080 https://example.com
 - 当前 MVP 以 TCP 代理为主，SOCKS5 UDP ASSOCIATE、透明代理、TUN 和系统路由不在本阶段范围内。
 - QUIC 协议族节点只有在 `with_quic` 构建标签启用时才进入 sing-box 支持状态，否则会记录 `sing_box_status=error` 并提示重新构建。
 - REALITY 或带 `client-fingerprint` 的 TLS 节点需要 `with_utls`，否则会记录 `sing_box_status=error` 并提示重新构建。
-- API 当前建议只监听本地地址，后续前端阶段再补管理端鉴权。
+- 管理 API 默认建议只监听本地地址；如需额外保护，请设置 `admin.token`，前端设置页会把 token 保存到当前浏览器的 `localStorage`。
 
 ## sing-box 故障排查
 
