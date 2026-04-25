@@ -169,6 +169,12 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
+也可以使用脚本一次完成推送分支、创建标签、推送标签：
+
+```bash
+./scripts/publish-release.sh v0.1.0
+```
+
 也可以在 GitHub 页面进入 `Actions -> Release -> Run workflow`，手动填写版本号创建发行版。
 
 ## SQLite 驱动说明

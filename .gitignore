@@ -1,14 +1,19 @@
 .codex/
 .codex_timer/
+.ai-work/
 
 /bin/
 /data/
+/docs/
 /release/
 /tmp/
 /web/dist/
 /web/node_modules/
 
 .env
+/AGENTS.md
+/*计划书*.md
+/成果书.md
 config.yaml
 config.local.yaml
 *.db
