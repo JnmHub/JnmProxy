@@ -1,7 +1,9 @@
-import { Activity, BarChart3, FolderKanban, Gauge, KeyRound, Network, Rss, Search, ServerCog, Settings, Tags } from 'lucide-react';
+import { Activity, BarChart3, FolderKanban, Gauge, KeyRound, Menu, Network, Rss, Search, ServerCog, Settings, Tags, X } from 'lucide-react';
+import { useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { getSingBoxStatus, getSystemHealth } from '../../api/system';
+import { Button } from '../ui/Button';
 
 const navItems = [
   { to: '/dashboard', label: '仪表盘', icon: Gauge },
@@ -16,44 +18,35 @@ const navItems = [
 ];
 
 export function AppShell() {
+  const [mobileOpen, setMobileOpen] = useState(false);
   const healthQuery = useQuery({ queryKey: ['system', 'health'], queryFn: getSystemHealth, refetchInterval: 30_000 });
   const singBoxQuery = useQuery({ queryKey: ['system', 'sing-box'], queryFn: getSingBoxStatus, refetchInterval: 30_000 });
 
   return (
     <div className="min-h-screen text-slate-100">
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-72 border-r border-slate-800/80 bg-slate-950/85 backdrop-blur-xl lg:block">
-        <div className="flex h-20 items-center gap-3 border-b border-slate-800 px-6">
-          <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-blue-500/15 text-blue-300 shadow-glow">
-            <Activity className="h-6 w-6" />
-          </div>
-          <div>
-            <div className="font-mono text-lg font-semibold tracking-tight">JnmProxy</div>
-            <div className="text-xs text-slate-400">代理池控制台</div>
-          </div>
-        </div>
-        <nav className="space-y-1 p-4">
-          {navItems.map((item) => {
-            const Icon = item.icon;
-            return (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                className={({ isActive }) =>
-                  `flex items-center gap-3 rounded-xl px-4 py-3 text-sm transition-colors duration-200 ${
-                    isActive ? 'bg-blue-500/15 text-blue-200 ring-1 ring-blue-400/20' : 'text-slate-400 hover:bg-slate-900 hover:text-slate-100'
-                  }`
-                }
-              >
-                <Icon className="h-4 w-4" />
-                {item.label}
-              </NavLink>
-            );
-          })}
-        </nav>
+        <Brand />
+        <SidebarNav />
       </aside>
+      {mobileOpen ? (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm lg:hidden">
+          <aside className="flex h-full w-80 max-w-[85vw] flex-col border-r border-slate-800 bg-slate-950 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-800">
+              <Brand compact />
+              <Button variant="ghost" className="mr-3 px-2" onClick={() => setMobileOpen(false)} aria-label="关闭菜单">
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+            <SidebarNav onNavigate={() => setMobileOpen(false)} />
+          </aside>
+        </div>
+      ) : null}
       <div className="lg:pl-72">
         <header className="sticky top-0 z-20 border-b border-slate-800/80 bg-slate-950/75 backdrop-blur-xl">
           <div className="flex h-20 items-center justify-between gap-4 px-5 lg:px-8">
+            <Button variant="ghost" className="px-2 lg:hidden" onClick={() => setMobileOpen(true)} aria-label="打开菜单">
+              <Menu className="h-5 w-5" />
+            </Button>
             <div className="hidden min-w-0 items-center gap-3 rounded-2xl border border-slate-800 bg-slate-900/70 px-4 py-2 text-slate-400 md:flex">
               <Search className="h-4 w-4" />
               <span className="text-sm">搜索节点、订阅、分组（后续接入）</span>
@@ -74,6 +67,45 @@ export function AppShell() {
         </main>
       </div>
     </div>
+  );
+}
+
+function Brand({ compact = false }: { compact?: boolean }) {
+  return (
+    <div className={`flex h-20 items-center gap-3 px-6 ${compact ? '' : 'border-b border-slate-800'}`}>
+      <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-blue-500/15 text-blue-300 shadow-glow">
+        <Activity className="h-6 w-6" />
+      </div>
+      <div>
+        <div className="font-mono text-lg font-semibold tracking-tight">JnmProxy</div>
+        <div className="text-xs text-slate-400">代理池控制台</div>
+      </div>
+    </div>
+  );
+}
+
+function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
+  return (
+    <nav className="space-y-1 p-4">
+      {navItems.map((item) => {
+        const Icon = item.icon;
+        return (
+          <NavLink
+            key={item.to}
+            to={item.to}
+            onClick={onNavigate}
+            className={({ isActive }) =>
+              `flex items-center gap-3 rounded-xl px-4 py-3 text-sm transition-colors duration-200 ${
+                isActive ? 'bg-blue-500/15 text-blue-200 ring-1 ring-blue-400/20' : 'text-slate-400 hover:bg-slate-900 hover:text-slate-100'
+              }`
+            }
+          >
+            <Icon className="h-4 w-4" />
+            {item.label}
+          </NavLink>
+        );
+      })}
+    </nav>
   );
 }
 
