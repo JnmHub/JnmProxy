@@ -186,6 +186,36 @@ CREATE INDEX IF NOT EXISTS idx_traffic_daily_bucket ON traffic_stats_daily(bucke
 CREATE INDEX IF NOT EXISTS idx_health_node_checked ON node_health_checks(node_id, checked_at);
 `,
 	},
+	{
+		version: 2,
+		name:    "sing_box_protocol_support",
+		sql: `
+ALTER TABLE proxy_nodes ADD COLUMN sing_box_outbound_json TEXT NOT NULL DEFAULT '';
+ALTER TABLE proxy_nodes ADD COLUMN sing_box_status TEXT NOT NULL DEFAULT 'unsupported' CHECK (sing_box_status IN ('supported', 'unsupported', 'error'));
+ALTER TABLE proxy_nodes ADD COLUMN sing_box_error TEXT NOT NULL DEFAULT '';
+ALTER TABLE proxy_nodes ADD COLUMN sing_box_version TEXT NOT NULL DEFAULT '';
+ALTER TABLE proxy_nodes ADD COLUMN udp_supported INTEGER NOT NULL DEFAULT 0 CHECK (udp_supported IN (0, 1));
+ALTER TABLE proxy_nodes ADD COLUMN transport_type TEXT NOT NULL DEFAULT '';
+
+CREATE TABLE IF NOT EXISTS sing_box_engine_states (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	node_id INTEGER NOT NULL,
+	engine_mode TEXT NOT NULL CHECK (engine_mode IN ('dialer', 'box')),
+	local_addr TEXT NOT NULL DEFAULT '',
+	status TEXT NOT NULL DEFAULT 'stopped' CHECK (status IN ('stopped', 'starting', 'running', 'failed')),
+	last_error TEXT NOT NULL DEFAULT '',
+	started_at TEXT,
+	last_used_at TEXT,
+	created_at TEXT NOT NULL DEFAULT (datetime('now')),
+	updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+	FOREIGN KEY (node_id) REFERENCES proxy_nodes(id) ON DELETE CASCADE,
+	UNIQUE (node_id, engine_mode)
+);
+
+CREATE INDEX IF NOT EXISTS idx_nodes_sing_box_status ON proxy_nodes(sing_box_status);
+CREATE INDEX IF NOT EXISTS idx_engine_states_node ON sing_box_engine_states(node_id, status);
+`,
+	},
 }
 
 func Migrate(ctx context.Context, store *sql.DB) error {

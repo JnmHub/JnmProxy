@@ -29,6 +29,12 @@ type ProxyNode struct {
 	Port                int           `json:"port"`
 	RawURI              string        `json:"raw_uri,omitempty"`
 	RawConfigJSON       string        `json:"raw_config_json"`
+	SingBoxOutboundJSON string        `json:"sing_box_outbound_json,omitempty"`
+	SingBoxStatus       SingBoxStatus `json:"sing_box_status"`
+	SingBoxError        string        `json:"sing_box_error,omitempty"`
+	SingBoxVersion      string        `json:"sing_box_version,omitempty"`
+	UDPSupported        bool          `json:"udp_supported"`
+	TransportType       string        `json:"transport_type,omitempty"`
 	AdapterStatus       AdapterStatus `json:"adapter_status"`
 	Enabled             bool          `json:"enabled"`
 	AliveStatus         AliveStatus   `json:"alive_status"`

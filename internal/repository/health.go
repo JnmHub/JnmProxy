@@ -27,7 +27,8 @@ type NodeHealthResult struct {
 func (repo *HealthRepository) ListCheckableNodes(ctx context.Context) ([]model.ProxyNode, error) {
 	rows, err := repo.db.QueryContext(ctx, `
 SELECT id, subscription_id, subscription_node_key, name, protocol, server, port, raw_uri,
-       raw_config_json, adapter_status, enabled, alive_status, last_seen_at,
+       raw_config_json, sing_box_outbound_json, sing_box_status, sing_box_error,
+       sing_box_version, udp_supported, transport_type, adapter_status, enabled, alive_status, last_seen_at,
        last_checked_at, latency_ms, fail_count, created_at, updated_at
 FROM proxy_nodes
 WHERE enabled = 1 AND adapter_status = 'supported'

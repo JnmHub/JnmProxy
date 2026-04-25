@@ -305,7 +305,8 @@ WHERE subscription_id = ? AND subscription_node_key NOT IN (%s)
 func (repo *SubscriptionRepository) ListNodesBySubscription(ctx context.Context, subscriptionID int64) ([]model.ProxyNode, error) {
 	rows, err := repo.db.QueryContext(ctx, `
 SELECT id, subscription_id, subscription_node_key, name, protocol, server, port, raw_uri,
-       raw_config_json, adapter_status, enabled, alive_status, last_seen_at,
+       raw_config_json, sing_box_outbound_json, sing_box_status, sing_box_error,
+       sing_box_version, udp_supported, transport_type, adapter_status, enabled, alive_status, last_seen_at,
        last_checked_at, latency_ms, fail_count, created_at, updated_at
 FROM proxy_nodes
 WHERE subscription_id = ?
@@ -388,19 +389,26 @@ func scanSubscription(row scanner) (*model.Subscription, error) {
 
 func scanProxyNode(row scanner) (*model.ProxyNode, error) {
 	var node model.ProxyNode
-	var rawURI, lastSeenAt, lastCheckedAt sql.NullString
+	var rawURI, singBoxOutboundJSON, singBoxError, singBoxVersion, transportType, lastSeenAt, lastCheckedAt sql.NullString
 	var latencyMS sql.NullInt64
-	var adapterStatus, aliveStatus string
-	var enabled int
+	var singBoxStatus, adapterStatus, aliveStatus string
+	var udpSupported, enabled int
 
 	if err := row.Scan(&node.ID, &node.SubscriptionID, &node.SubscriptionNodeKey, &node.Name,
-		&node.Protocol, &node.Server, &node.Port, &rawURI, &node.RawConfigJSON, &adapterStatus,
-		&enabled, &aliveStatus, &lastSeenAt, &lastCheckedAt, &latencyMS, &node.FailCount,
-		&node.CreatedAt, &node.UpdatedAt); err != nil {
+		&node.Protocol, &node.Server, &node.Port, &rawURI, &node.RawConfigJSON, &singBoxOutboundJSON,
+		&singBoxStatus, &singBoxError, &singBoxVersion, &udpSupported, &transportType, &adapterStatus,
+		&enabled, &aliveStatus, &lastSeenAt, &lastCheckedAt, &latencyMS, &node.FailCount, &node.CreatedAt,
+		&node.UpdatedAt); err != nil {
 		return nil, fmt.Errorf("scan proxy node: %w", err)
 	}
 
 	node.RawURI = nullStringValue(rawURI)
+	node.SingBoxOutboundJSON = nullStringValue(singBoxOutboundJSON)
+	node.SingBoxStatus = model.SingBoxStatus(singBoxStatus)
+	node.SingBoxError = nullStringValue(singBoxError)
+	node.SingBoxVersion = nullStringValue(singBoxVersion)
+	node.UDPSupported = intToBool(udpSupported)
+	node.TransportType = nullStringValue(transportType)
 	node.AdapterStatus = model.AdapterStatus(adapterStatus)
 	node.Enabled = intToBool(enabled)
 	node.AliveStatus = model.AliveStatus(aliveStatus)

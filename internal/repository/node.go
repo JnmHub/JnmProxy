@@ -28,7 +28,8 @@ func NewNodeRepository(db *sql.DB) *NodeRepository {
 func (repo *NodeRepository) Get(ctx context.Context, id int64) (*model.ProxyNode, error) {
 	row := repo.db.QueryRowContext(ctx, `
 SELECT id, subscription_id, subscription_node_key, name, protocol, server, port, raw_uri,
-       raw_config_json, adapter_status, enabled, alive_status, last_seen_at,
+       raw_config_json, sing_box_outbound_json, sing_box_status, sing_box_error,
+       sing_box_version, udp_supported, transport_type, adapter_status, enabled, alive_status, last_seen_at,
        last_checked_at, latency_ms, fail_count, created_at, updated_at
 FROM proxy_nodes
 WHERE id = ?
@@ -39,7 +40,9 @@ WHERE id = ?
 func (repo *NodeRepository) List(ctx context.Context, filter NodeListFilter) ([]model.ProxyNode, error) {
 	query := `
 SELECT n.id, n.subscription_id, n.subscription_node_key, n.name, n.protocol, n.server, n.port,
-       n.raw_uri, n.raw_config_json, n.adapter_status, n.enabled, n.alive_status,
+       n.raw_uri, n.raw_config_json, n.sing_box_outbound_json, n.sing_box_status,
+       n.sing_box_error, n.sing_box_version, n.udp_supported, n.transport_type,
+       n.adapter_status, n.enabled, n.alive_status,
        n.last_seen_at, n.last_checked_at, n.latency_ms, n.fail_count, n.created_at, n.updated_at
 FROM proxy_nodes n
 `

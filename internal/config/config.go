@@ -16,6 +16,7 @@ type Config struct {
 	Subscription SubscriptionConfig `yaml:"subscription"`
 	Stats        StatsConfig        `yaml:"stats"`
 	Scheduler    SchedulerConfig    `yaml:"scheduler"`
+	SingBox      SingBoxConfig      `yaml:"sing_box"`
 	Security     SecurityConfig     `yaml:"security"`
 }
 
@@ -48,6 +49,20 @@ type SchedulerConfig struct {
 	HealthCheckTarget          string `yaml:"health_check_target"`
 }
 
+type SingBoxConfig struct {
+	Enabled                   bool   `yaml:"enabled"`
+	Version                   string `yaml:"version"`
+	Mode                      string `yaml:"mode"`
+	PreferNativeHTTPSOCKS     bool   `yaml:"prefer_native_http_socks"`
+	MaxActiveEngines          int    `yaml:"max_active_engines"`
+	EngineIdleTimeoutSeconds  int    `yaml:"engine_idle_timeout_seconds"`
+	EngineStartTimeoutSeconds int    `yaml:"engine_start_timeout_seconds"`
+	EngineDialTimeoutSeconds  int    `yaml:"engine_dial_timeout_seconds"`
+	LogLevel                  string `yaml:"log_level"`
+	HealthCheckTarget         string `yaml:"health_check_target"`
+	EnableUDP                 bool   `yaml:"enable_udp"`
+}
+
 type SecurityConfig struct {
 	RedactLogs bool `yaml:"redact_logs"`
 }
@@ -76,6 +91,19 @@ func Default() Config {
 			SubscriptionTickSeconds:    30,
 			HealthCheckIntervalSeconds: 300,
 			HealthCheckTarget:          "",
+		},
+		SingBox: SingBoxConfig{
+			Enabled:                   true,
+			Version:                   "v1.13.8",
+			Mode:                      "auto",
+			PreferNativeHTTPSOCKS:     true,
+			MaxActiveEngines:          64,
+			EngineIdleTimeoutSeconds:  600,
+			EngineStartTimeoutSeconds: 10,
+			EngineDialTimeoutSeconds:  30,
+			LogLevel:                  "warn",
+			HealthCheckTarget:         "www.gstatic.com:443",
+			EnableUDP:                 false,
 		},
 		Security: SecurityConfig{
 			RedactLogs: true,
@@ -136,6 +164,29 @@ func (cfg Config) Validate() error {
 	if cfg.Scheduler.HealthCheckIntervalSeconds <= 0 {
 		return errors.New("scheduler.health_check_interval_seconds must be positive")
 	}
+	if cfg.SingBox.Enabled {
+		if cfg.SingBox.Version == "" {
+			return errors.New("sing_box.version is required when sing_box.enabled is true")
+		}
+		if cfg.SingBox.Mode != "auto" && cfg.SingBox.Mode != "dialer" && cfg.SingBox.Mode != "box" {
+			return errors.New("sing_box.mode must be auto, dialer, or box")
+		}
+		if cfg.SingBox.MaxActiveEngines <= 0 {
+			return errors.New("sing_box.max_active_engines must be positive")
+		}
+		if cfg.SingBox.EngineIdleTimeoutSeconds <= 0 {
+			return errors.New("sing_box.engine_idle_timeout_seconds must be positive")
+		}
+		if cfg.SingBox.EngineStartTimeoutSeconds <= 0 {
+			return errors.New("sing_box.engine_start_timeout_seconds must be positive")
+		}
+		if cfg.SingBox.EngineDialTimeoutSeconds <= 0 {
+			return errors.New("sing_box.engine_dial_timeout_seconds must be positive")
+		}
+		if cfg.SingBox.LogLevel == "" {
+			return errors.New("sing_box.log_level is required when sing_box.enabled is true")
+		}
+	}
 	return nil
 }
 
@@ -157,6 +208,18 @@ func applyEnv(cfg *Config) error {
 		*target = parsed
 		return nil
 	}
+	setBool := func(env string, target *bool) error {
+		value := os.Getenv(env)
+		if value == "" {
+			return nil
+		}
+		parsed, err := strconv.ParseBool(value)
+		if err != nil {
+			return fmt.Errorf("parse %s: %w", env, err)
+		}
+		*target = parsed
+		return nil
+	}
 
 	setString("JNMPROXY_API_ADDR", &cfg.Server.APIAddr)
 	setString("JNMPROXY_HTTP_ADDR", &cfg.Proxy.HTTPAddr)
@@ -164,6 +227,10 @@ func applyEnv(cfg *Config) error {
 	setString("JNMPROXY_DB_PATH", &cfg.Database.Path)
 	setString("JNMPROXY_SUBSCRIPTION_DEFAULT_USER_AGENT", &cfg.Subscription.DefaultUserAgent)
 	setString("JNMPROXY_HEALTH_CHECK_TARGET", &cfg.Scheduler.HealthCheckTarget)
+	setString("JNMPROXY_SING_BOX_VERSION", &cfg.SingBox.Version)
+	setString("JNMPROXY_SING_BOX_MODE", &cfg.SingBox.Mode)
+	setString("JNMPROXY_SING_BOX_LOG_LEVEL", &cfg.SingBox.LogLevel)
+	setString("JNMPROXY_SING_BOX_HEALTH_CHECK_TARGET", &cfg.SingBox.HealthCheckTarget)
 
 	if err := setInt("JNMPROXY_SUBSCRIPTION_DEFAULT_REFRESH_INTERVAL_SECONDS", &cfg.Subscription.DefaultRefreshIntervalSeconds); err != nil {
 		return err
@@ -178,6 +245,27 @@ func applyEnv(cfg *Config) error {
 		return err
 	}
 	if err := setInt("JNMPROXY_SCHEDULER_HEALTH_CHECK_INTERVAL_SECONDS", &cfg.Scheduler.HealthCheckIntervalSeconds); err != nil {
+		return err
+	}
+	if err := setBool("JNMPROXY_SING_BOX_ENABLED", &cfg.SingBox.Enabled); err != nil {
+		return err
+	}
+	if err := setBool("JNMPROXY_SING_BOX_PREFER_NATIVE_HTTP_SOCKS", &cfg.SingBox.PreferNativeHTTPSOCKS); err != nil {
+		return err
+	}
+	if err := setBool("JNMPROXY_SING_BOX_ENABLE_UDP", &cfg.SingBox.EnableUDP); err != nil {
+		return err
+	}
+	if err := setInt("JNMPROXY_SING_BOX_MAX_ACTIVE_ENGINES", &cfg.SingBox.MaxActiveEngines); err != nil {
+		return err
+	}
+	if err := setInt("JNMPROXY_SING_BOX_ENGINE_IDLE_TIMEOUT_SECONDS", &cfg.SingBox.EngineIdleTimeoutSeconds); err != nil {
+		return err
+	}
+	if err := setInt("JNMPROXY_SING_BOX_ENGINE_START_TIMEOUT_SECONDS", &cfg.SingBox.EngineStartTimeoutSeconds); err != nil {
+		return err
+	}
+	if err := setInt("JNMPROXY_SING_BOX_ENGINE_DIAL_TIMEOUT_SECONDS", &cfg.SingBox.EngineDialTimeoutSeconds); err != nil {
 		return err
 	}
 	return nil

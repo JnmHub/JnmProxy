@@ -38,3 +38,11 @@ const (
 	SelectionPolicyRandom SelectionPolicy = "random"
 	SelectionPolicyFixed  SelectionPolicy = "fixed"
 )
+
+type SingBoxStatus string
+
+const (
+	SingBoxStatusSupported   SingBoxStatus = "supported"
+	SingBoxStatusUnsupported SingBoxStatus = "unsupported"
+	SingBoxStatusError       SingBoxStatus = "error"
+)

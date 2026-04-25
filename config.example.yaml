@@ -21,5 +21,18 @@ scheduler:
   health_check_interval_seconds: 300
   health_check_target: ""
 
+sing_box:
+  enabled: true
+  version: "v1.13.8"
+  mode: "auto" # auto | dialer | box
+  prefer_native_http_socks: true
+  max_active_engines: 64
+  engine_idle_timeout_seconds: 600
+  engine_start_timeout_seconds: 10
+  engine_dial_timeout_seconds: 30
+  log_level: "warn"
+  health_check_target: "www.gstatic.com:443"
+  enable_udp: false
+
 security:
   redact_logs: true

@@ -234,7 +234,9 @@ ORDER BY g.name ASC
 func (repo *GroupRepository) ListNodesByGroup(ctx context.Context, groupID int64) ([]model.ProxyNode, error) {
 	rows, err := repo.db.QueryContext(ctx, `
 SELECT n.id, n.subscription_id, n.subscription_node_key, n.name, n.protocol, n.server, n.port,
-       n.raw_uri, n.raw_config_json, n.adapter_status, n.enabled, n.alive_status,
+       n.raw_uri, n.raw_config_json, n.sing_box_outbound_json, n.sing_box_status,
+       n.sing_box_error, n.sing_box_version, n.udp_supported, n.transport_type,
+       n.adapter_status, n.enabled, n.alive_status,
        n.last_seen_at, n.last_checked_at, n.latency_ms, n.fail_count, n.created_at, n.updated_at
 FROM proxy_nodes n
 JOIN proxy_node_groups ng ON ng.node_id = n.id
