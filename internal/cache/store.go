@@ -63,9 +63,17 @@ type Store struct {
 	groupNodeIDs          map[int64][]int64
 	allNodeIDs            []int64
 	random                *rand.Rand
+	selectionBags         map[int64]*selectionBag
 	nodeFailures          map[int64]nodeFailureState
 	failureThreshold      int
 	circuitBreakDuration  time.Duration
+}
+
+type selectionBag struct {
+	candidates   []int64
+	order        []int64
+	index        int
+	lastSelected int64
 }
 
 type nodeFailureState struct {
@@ -79,6 +87,7 @@ func NewStore() *Store {
 		nodesByID:             make(map[int64]NodeSnapshot),
 		groupNodeIDs:          make(map[int64][]int64),
 		random:                rand.New(rand.NewSource(time.Now().UnixNano())),
+		selectionBags:         make(map[int64]*selectionBag),
 		nodeFailures:          make(map[int64]nodeFailureState),
 		failureThreshold:      3,
 		circuitBreakDuration:  time.Minute,
@@ -100,6 +109,7 @@ func (store *Store) Load(ctx context.Context, db *sql.DB) error {
 	if store.random == nil {
 		store.random = rand.New(rand.NewSource(time.Now().UnixNano()))
 	}
+	store.selectionBags = make(map[int64]*selectionBag)
 	if store.nodeFailures == nil {
 		store.nodeFailures = make(map[int64]nodeFailureState)
 	}
@@ -143,7 +153,7 @@ func (store *Store) Select(username string) (Selection, error) {
 
 	selectedID := candidateIDs[0]
 	if credential.SelectionPolicy == model.SelectionPolicyRandom && len(candidateIDs) > 1 {
-		selectedID = candidateIDs[store.random.Intn(len(candidateIDs))]
+		selectedID = store.selectRandomNodeLocked(credential, candidateIDs)
 	}
 	node, ok := store.nodesByID[selectedID]
 	if !ok {
@@ -172,6 +182,66 @@ func (store *Store) ReportNodeSuccess(nodeID int64) {
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	delete(store.nodeFailures, nodeID)
+}
+
+func (store *Store) selectRandomNodeLocked(credential CredentialSnapshot, candidateIDs []int64) int64 {
+	if len(candidateIDs) == 1 {
+		return candidateIDs[0]
+	}
+	if store.selectionBags == nil {
+		store.selectionBags = make(map[int64]*selectionBag)
+	}
+	bag := store.selectionBags[credential.ID]
+	if bag == nil {
+		bag = &selectionBag{}
+		store.selectionBags[credential.ID] = bag
+	}
+	if !sameNodeIDs(bag.candidates, candidateIDs) {
+		bag.reset(candidateIDs, store.random)
+	}
+	return bag.next(store.random)
+}
+
+func (bag *selectionBag) reset(candidateIDs []int64, random *rand.Rand) {
+	bag.candidates = append(bag.candidates[:0], candidateIDs...)
+	bag.order = append(bag.order[:0], candidateIDs...)
+	bag.index = 0
+	bag.shuffle(random)
+}
+
+func (bag *selectionBag) next(random *rand.Rand) int64 {
+	if bag.index >= len(bag.order) {
+		bag.order = append(bag.order[:0], bag.candidates...)
+		bag.index = 0
+		bag.shuffle(random)
+	}
+	selectedID := bag.order[bag.index]
+	bag.index++
+	bag.lastSelected = selectedID
+	return selectedID
+}
+
+func (bag *selectionBag) shuffle(random *rand.Rand) {
+	random.Shuffle(len(bag.order), func(i int, j int) {
+		bag.order[i], bag.order[j] = bag.order[j], bag.order[i]
+	})
+	if len(bag.order) <= 1 || bag.lastSelected == 0 || bag.order[0] != bag.lastSelected {
+		return
+	}
+	swapIndex := 1 + random.Intn(len(bag.order)-1)
+	bag.order[0], bag.order[swapIndex] = bag.order[swapIndex], bag.order[0]
+}
+
+func sameNodeIDs(left []int64, right []int64) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
 }
 
 func (store *Store) candidateIDsLocked(credential CredentialSnapshot) []int64 {
