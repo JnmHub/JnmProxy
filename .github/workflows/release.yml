@@ -1,0 +1,89 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version, for example v0.1.0"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install packaging tools
+        run: sudo apt-get update && sudo apt-get install -y zip
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            version="${GITHUB_REF_NAME}"
+          else
+            version="${{ inputs.version }}"
+          fi
+          if [ -z "$version" ]; then
+            echo "version is required" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Build release packages
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          PACKAGE_FORMAT: zip
+          GO_TAGS: sqlite_purego with_quic with_utls
+          CGO_ENABLED: "0"
+        run: ./scripts/build-all-platforms.sh
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: jnmproxy-${{ steps.version.outputs.version }}-packages
+          path: |
+            release/packages/*.zip
+            release/packages/SHA256SUMS
+          if-no-files-found: error
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        shell: bash
+        run: |
+          extra_args=()
+          if [ "${GITHUB_REF_TYPE}" != "tag" ]; then
+            extra_args+=(--target "$GITHUB_SHA")
+          fi
+          gh release create "$VERSION" \
+            release/packages/*.zip \
+            release/packages/SHA256SUMS \
+            --title "$VERSION" \
+            --generate-notes \
+            "${extra_args[@]}"

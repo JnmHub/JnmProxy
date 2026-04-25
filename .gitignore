@@ -9,6 +9,7 @@
 /web/node_modules/
 
 .env
+config.yaml
 config.local.yaml
 *.db
 *.db-shm

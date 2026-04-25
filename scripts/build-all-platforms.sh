@@ -11,6 +11,7 @@ GOCACHE="${GOCACHE:-/tmp/jnm-go-cache}"
 GO_TAGS="${GO_TAGS:-sqlite_purego with_quic with_utls}"
 RUN_WEB_BUILD="${RUN_WEB_BUILD:-1}"
 RUN_TESTS="${RUN_TESTS:-1}"
+PACKAGE_FORMAT="${PACKAGE_FORMAT:-auto}"
 
 platforms=(
   "linux amd64"
@@ -55,6 +56,16 @@ for platform in "${platforms[@]}"; do
     binary_name="$APP_NAME.exe"
     archive_name="$package_name.zip"
   fi
+  case "$PACKAGE_FORMAT" in
+    auto) ;;
+    zip) archive_name="$package_name.zip" ;;
+    tar.gz|tgz) archive_name="$package_name.tar.gz" ;;
+    *)
+      echo "unsupported PACKAGE_FORMAT: $PACKAGE_FORMAT" >&2
+      echo "supported values: auto, zip, tar.gz" >&2
+      exit 1
+      ;;
+  esac
 
   echo "==> build $goos/$goarch"
   mkdir -p "$work_dir"
@@ -90,7 +101,11 @@ Run in PowerShell:
    .\\$binary_name -config config.yaml
 EOF
 
-  if [ "$goos" = "windows" ] && command -v zip >/dev/null 2>&1; then
+  if [[ "$archive_name" == *.zip ]]; then
+    if ! command -v zip >/dev/null 2>&1; then
+      echo "zip command is required when PACKAGE_FORMAT=zip or building Windows packages" >&2
+      exit 1
+    fi
     (cd "$RELEASE_DIR" && zip -qr "$archive_name" "$package_name")
   else
     (cd "$RELEASE_DIR" && tar -czf "$archive_name" "$package_name")
@@ -100,10 +115,20 @@ done
 echo "==> write checksums"
 (
   cd "$RELEASE_DIR"
+  archives=()
+  for pattern in *.tar.gz *.zip; do
+    if [ -e "$pattern" ]; then
+      archives+=("$pattern")
+    fi
+  done
+  if [ "${#archives[@]}" -eq 0 ]; then
+    echo "no release archives found" >&2
+    exit 1
+  fi
   if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum *.tar.gz *.zip > SHA256SUMS 2>/dev/null || sha256sum *.tar.gz > SHA256SUMS
+    sha256sum "${archives[@]}" > SHA256SUMS
   else
-    shasum -a 256 *.tar.gz *.zip > SHA256SUMS 2>/dev/null || shasum -a 256 *.tar.gz > SHA256SUMS
+    shasum -a 256 "${archives[@]}" > SHA256SUMS
   fi
 )
 

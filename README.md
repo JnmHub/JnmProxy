@@ -142,6 +142,35 @@ CGO_ENABLED=0
 RUN_WEB_BUILD=0 RUN_TESTS=0 ./scripts/build-all-platforms.sh
 ```
 
+如果希望所有平台都打成 `.zip`：
+
+```bash
+PACKAGE_FORMAT=zip ./scripts/build-all-platforms.sh
+```
+
+## GitHub Actions 自动发行版
+
+仓库已内置 `.github/workflows/release.yml`。
+
+创建并推送版本标签后，会自动：
+
+- 安装 Go 和 Node.js。
+- 构建前端并同步到 Go 内嵌目录。
+- 使用 `sqlite_purego with_quic with_utls` 标签执行全量测试。
+- 交叉编译 Linux、macOS、Windows 的 amd64/arm64 包。
+- 将所有平台包打成 `.zip`。
+- 生成 `SHA256SUMS`。
+- 创建 GitHub Release 并上传附件。
+
+推荐发布命令：
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+也可以在 GitHub 页面进入 `Actions -> Release -> Run workflow`，手动填写版本号创建发行版。
+
 ## SQLite 驱动说明
 
 项目支持两种 SQLite 驱动：
