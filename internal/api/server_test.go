@@ -117,6 +117,21 @@ proxies:
 		t.Fatalf("expected global search to return items: %#v", searchResult)
 	}
 
+	handler.Cache.ConfigureRuntime(cache.RuntimeOptions{FailureThreshold: 1, CircuitBreakDuration: time.Minute})
+	handler.Cache.ReportNodeFailure(nodeID, "dial failed")
+	runtimeNodes := getJSON(t, handler, "/api/v1/runtime/nodes").([]any)
+	if len(runtimeNodes) == 0 {
+		t.Fatalf("expected runtime nodes to return items")
+	}
+	runtimeNode := runtimeNodes[0].(map[string]any)
+	if int64(runtimeNode["node_id"].(float64)) != nodeID || runtimeNode["circuit_open"] != true || runtimeNode["in_candidate_pool"] != false {
+		t.Fatalf("unexpected runtime node state: %#v", runtimeNode)
+	}
+	if runtimeNode["last_failure"] != "dial failed" {
+		t.Fatalf("expected last failure reason: %#v", runtimeNode)
+	}
+	handler.Cache.ReportNodeSuccess(nodeID)
+
 	credential := postJSON(t, handler, "/api/v1/credentials", map[string]any{
 		"username":         "user",
 		"password":         "pass",

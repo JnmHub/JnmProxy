@@ -190,6 +190,32 @@ func TestSelectExcludingSkipsAlreadyTriedNodes(t *testing.T) {
 	}
 }
 
+func TestRuntimeNodeSnapshotsExposeCircuitState(t *testing.T) {
+	store := NewStore()
+	store.ConfigureRuntime(RuntimeOptions{FailureThreshold: 1, CircuitBreakDuration: time.Minute})
+	store.nodesByID[7] = NodeSnapshot{ID: 7}
+	store.allNodeIDs = []int64{7}
+
+	store.ReportNodeFailure(7, "dial failed")
+	snapshots := store.RuntimeNodeSnapshots()
+	if len(snapshots) != 1 {
+		t.Fatalf("expected one runtime snapshot, got %d", len(snapshots))
+	}
+	snapshot := snapshots[0]
+	if snapshot.NodeID != 7 || snapshot.FailureCount != 1 || !snapshot.CircuitOpen || snapshot.InCandidatePool {
+		t.Fatalf("unexpected runtime snapshot: %#v", snapshot)
+	}
+	if snapshot.LastFailure != "dial failed" || snapshot.LastFailedAt.IsZero() || snapshot.CircuitUntil.IsZero() {
+		t.Fatalf("runtime snapshot should include failure detail: %#v", snapshot)
+	}
+
+	store.ReportNodeSuccess(7)
+	snapshot = store.RuntimeNodeSnapshots()[0]
+	if snapshot.FailureCount != 0 || snapshot.CircuitOpen || !snapshot.InCandidatePool || snapshot.LastFailure != "" {
+		t.Fatalf("success should clear runtime failure state: %#v", snapshot)
+	}
+}
+
 func TestShuffleBagSelectsEachCandidateOncePerRound(t *testing.T) {
 	store := newShuffleTestStore("random-user", []int64{1, 2, 3, 4, 5})
 

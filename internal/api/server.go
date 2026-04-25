@@ -81,6 +81,8 @@ func (server *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		server.handleOperationLogs(w, r, segments)
 	case "search":
 		server.handleSearch(w, r, segments)
+	case "runtime":
+		server.handleRuntime(w, r, segments)
 	case "groups":
 		server.handleGroups(w, r, segments)
 	case "group-keywords":
@@ -638,6 +640,36 @@ func (server *Server) handleSearch(w http.ResponseWriter, r *http.Request, segme
 	}
 	result, err := server.SearchRepo.Search(r.Context(), r.URL.Query().Get("q"))
 	writeResult(w, result, err)
+}
+
+func (server *Server) handleRuntime(w http.ResponseWriter, r *http.Request, segments []string) {
+	if len(segments) != 2 || segments[1] != "nodes" || r.Method != http.MethodGet {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	if server.Cache == nil {
+		writeResult(w, []model.RuntimeNodeState{}, nil)
+		return
+	}
+	snapshots := server.Cache.RuntimeNodeSnapshots()
+	items := make([]model.RuntimeNodeState, 0, len(snapshots))
+	for _, snapshot := range snapshots {
+		item := model.RuntimeNodeState{
+			NodeID:          snapshot.NodeID,
+			FailureCount:    snapshot.FailureCount,
+			CircuitOpen:     snapshot.CircuitOpen,
+			InCandidatePool: snapshot.InCandidatePool,
+			LastFailure:     snapshot.LastFailure,
+		}
+		if !snapshot.CircuitUntil.IsZero() {
+			item.CircuitUntil = snapshot.CircuitUntil.UTC().Format(time.RFC3339)
+		}
+		if !snapshot.LastFailedAt.IsZero() {
+			item.LastFailedAt = snapshot.LastFailedAt.UTC().Format(time.RFC3339)
+		}
+		items = append(items, item)
+	}
+	writeResult(w, items, nil)
 }
 
 type credentialResponse struct {

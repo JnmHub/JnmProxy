@@ -116,6 +116,16 @@ export interface ProxyNodeSummary {
   unknown: number;
 }
 
+export interface RuntimeNodeState {
+  node_id: number;
+  failure_count: number;
+  circuit_open: boolean;
+  circuit_until?: string;
+  in_candidate_pool: boolean;
+  last_failure?: string;
+  last_failed_at?: string;
+}
+
 export interface ProxyGroup {
   id: number;
   name: string;

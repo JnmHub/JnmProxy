@@ -50,6 +50,16 @@ type NodeSnapshot struct {
 	GroupIDs            []int64
 }
 
+type NodeRuntimeSnapshot struct {
+	NodeID          int64
+	FailureCount    int
+	CircuitOpen     bool
+	CircuitUntil    time.Time
+	InCandidatePool bool
+	LastFailure     string
+	LastFailedAt    time.Time
+}
+
 type Selection struct {
 	Credential CredentialSnapshot
 	Node       NodeSnapshot
@@ -136,6 +146,27 @@ func (store *Store) Credential(username string) (CredentialSnapshot, bool) {
 	return credential, ok
 }
 
+func (store *Store) RuntimeNodeSnapshots() []NodeRuntimeSnapshot {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+
+	now := time.Now()
+	seen := make(map[int64]struct{}, len(store.nodesByID)+len(store.nodeFailures))
+	snapshots := make([]NodeRuntimeSnapshot, 0, len(store.nodesByID)+len(store.nodeFailures))
+	for nodeID := range store.nodesByID {
+		seen[nodeID] = struct{}{}
+		snapshots = append(snapshots, store.runtimeSnapshotLocked(nodeID, now))
+	}
+	for nodeID := range store.nodeFailures {
+		if _, ok := seen[nodeID]; ok {
+			continue
+		}
+		snapshots = append(snapshots, store.runtimeSnapshotLocked(nodeID, now))
+	}
+	sort.Slice(snapshots, func(i, j int) bool { return snapshots[i].NodeID < snapshots[j].NodeID })
+	return snapshots
+}
+
 func (store *Store) ConfigureRuntime(options RuntimeOptions) {
 	store.mu.Lock()
 	defer store.mu.Unlock()
@@ -204,12 +235,12 @@ func (store *Store) ReportNodeFailure(nodeID int64, reasons ...string) {
 
 	state := store.nodeFailures[nodeID]
 	state.Count++
+	state.LastFailedAt = time.Now()
 	if len(reasons) > 0 {
 		state.LastFailure = reasons[0]
-		state.LastFailedAt = time.Now()
 	}
 	if state.Count >= store.failureThreshold {
-		state.CircuitUntil = time.Now().Add(store.circuitBreakDuration)
+		state.CircuitUntil = state.LastFailedAt.Add(store.circuitBreakDuration)
 	}
 	store.nodeFailures[nodeID] = state
 }
@@ -351,6 +382,26 @@ func (store *Store) selectedGroupIDLocked(credential CredentialSnapshot, nodeID 
 		}
 	}
 	return 0
+}
+
+func (store *Store) runtimeSnapshotLocked(nodeID int64, now time.Time) NodeRuntimeSnapshot {
+	_, loaded := store.nodesByID[nodeID]
+	state, failed := store.nodeFailures[nodeID]
+	if failed && !state.CircuitUntil.IsZero() && !now.Before(state.CircuitUntil) {
+		delete(store.nodeFailures, nodeID)
+		failed = false
+		state = nodeFailureState{}
+	}
+	circuitOpen := failed && !state.CircuitUntil.IsZero() && now.Before(state.CircuitUntil)
+	return NodeRuntimeSnapshot{
+		NodeID:          nodeID,
+		FailureCount:    state.Count,
+		CircuitOpen:     circuitOpen,
+		CircuitUntil:    state.CircuitUntil,
+		InCandidatePool: loaded && !circuitOpen,
+		LastFailure:     state.LastFailure,
+		LastFailedAt:    state.LastFailedAt,
+	}
 }
 
 func loadSnapshot(ctx context.Context, db *sql.DB) (*Store, error) {

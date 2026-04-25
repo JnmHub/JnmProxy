@@ -1,5 +1,5 @@
 import { apiRequest } from './client';
-import type { AdapterStatus, AliveStatus, ProxyNode, ProxyNodePage, ProxyNodeSummary } from './types';
+import type { AdapterStatus, AliveStatus, ProxyNode, ProxyNodePage, ProxyNodeSummary, RuntimeNodeState } from './types';
 
 export interface NodeFilter {
   subscription_id?: number;
@@ -39,6 +39,10 @@ export function listNodePage(filter?: NodePageFilter) {
 
 export function getNodeSummary() {
   return apiRequest<ProxyNodeSummary>('/nodes/summary');
+}
+
+export function listRuntimeNodes() {
+  return apiRequest<RuntimeNodeState[]>('/runtime/nodes');
 }
 
 export function getNode(id: number) {

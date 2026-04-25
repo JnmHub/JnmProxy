@@ -2,10 +2,10 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Activity, Eye, Filter, RefreshCw, RotateCcw, Search, ShieldCheck } from 'lucide-react';
 import { useDeferredValue, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { batchNodes, checkAllNodes, checkNode, listNodePage, rebuildNodeAdapter, setNodeEnabled, type NodeBatchAction, type NodeFilter } from '../api/nodes';
+import { batchNodes, checkAllNodes, checkNode, listNodePage, listRuntimeNodes, rebuildNodeAdapter, setNodeEnabled, type NodeBatchAction, type NodeFilter } from '../api/nodes';
 import { listGroups } from '../api/groups';
 import { listSubscriptions } from '../api/subscriptions';
-import type { ProxyGroup, ProxyNode } from '../api/types';
+import type { ProxyGroup, ProxyNode, RuntimeNodeState } from '../api/types';
 import { Badge } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
 import { Card, CardHeader } from '../components/ui/Card';
@@ -41,6 +41,7 @@ export function NodesPage() {
     page_size: pageSize,
   }), [deferredSearch, filter, page, pageSize, region]);
   const nodesQuery = useQuery({ queryKey: ['nodes', 'page', pageFilter], queryFn: () => listNodePage(pageFilter) });
+  const runtimeQuery = useQuery({ queryKey: ['runtime', 'nodes'], queryFn: listRuntimeNodes, refetchInterval: 5_000 });
   const subscriptionsQuery = useQuery({ queryKey: ['subscriptions'], queryFn: listSubscriptions });
   const groupsQuery = useQuery({ queryKey: ['groups'], queryFn: listGroups });
 
@@ -65,6 +66,7 @@ export function NodesPage() {
   const protocolOptions = commonProtocols;
   const subscriptionNames = useMemo(() => new Map((subscriptionsQuery.data ?? []).map((item) => [item.id, item.name])), [subscriptionsQuery.data]);
   const groupNames = useMemo(() => new Map((groupsQuery.data ?? []).map((group) => [group.id, group.name])), [groupsQuery.data]);
+  const runtimeByNodeID = useMemo(() => new Map((runtimeQuery.data ?? []).map((item) => [item.node_id, item])), [runtimeQuery.data]);
   const summary = useMemo(() => nodeSummary(nodes), [nodes]);
   const allSelected = selected.length > 0 && selected.length === nodes.length;
 
@@ -226,14 +228,16 @@ export function NodesPage() {
         {nodesQuery.isLoading ? <LoadingState /> : (
           <>
             <DataTable columns={['选择', '节点', '来源', '状态', '协议', '延迟', '服务器', '操作']} empty={!nodes.length}>
-            {nodes.map((node) => (
+            {nodes.map((node) => {
+              const runtime = runtimeByNodeID.get(node.id);
+              return (
               <tr key={node.id} className="hover:bg-slate-900/50">
                 <td className="px-4 py-3">
                   <input type="checkbox" checked={selected.includes(node.id)} onChange={(event) => toggleSelected(node.id, event.target.checked)} />
                 </td>
                 <td className="px-4 py-3">
                   <button className="text-left font-medium text-blue-200 hover:text-blue-100" onClick={() => setDetail(node)}>{node.name}</button>
-                  <div className="mt-1 text-xs text-slate-500">{node.enabled ? '启用' : '禁用'} / 失败 {node.fail_count}</div>
+                  <div className="mt-1 text-xs text-slate-500">{node.enabled ? '启用' : '禁用'} / DB失败 {node.fail_count} / 运行失败 {runtime?.failure_count ?? 0}</div>
                 </td>
                 <td className="px-4 py-3 text-xs text-slate-400">
                   <div>{subscriptionNames.get(node.subscription_id) ?? `订阅 ${node.subscription_id}`}</div>
@@ -243,6 +247,7 @@ export function NodesPage() {
                   <div className="flex flex-wrap gap-2">
                     <Badge value={node.alive_status} />
                     <Badge value={node.sing_box_status}>SB {statusLabel(node.sing_box_status)}</Badge>
+                    {runtime ? <Badge value={runtime.circuit_open ? 'failed' : runtime.in_candidate_pool ? 'supported' : 'unknown'}>{runtime.circuit_open ? '熔断中' : runtime.in_candidate_pool ? '候选池' : '未入池'}</Badge> : null}
                   </div>
                 </td>
                 <td className="px-4 py-3 font-mono text-xs">{node.protocol}</td>
@@ -257,7 +262,8 @@ export function NodesPage() {
                   </div>
                 </td>
               </tr>
-            ))}
+              );
+            })}
             {nodes.length ? (
               <tr>
                 <td className="px-4 py-3">
@@ -280,7 +286,7 @@ export function NodesPage() {
       </Card>
 
       <Drawer open={Boolean(detail)} title={detail?.name ?? '节点详情'} onClose={() => setDetail(null)}>
-        {detail ? <NodeDetail node={detail} subscriptionName={subscriptionNames.get(detail.subscription_id)} groupNames={groupNames} /> : null}
+        {detail ? <NodeDetail node={detail} runtime={runtimeByNodeID.get(detail.id)} subscriptionName={subscriptionNames.get(detail.subscription_id)} groupNames={groupNames} /> : null}
       </Drawer>
       <ConfirmDialog state={confirm} onClose={() => setConfirm(null)} />
     </div>
@@ -304,8 +310,8 @@ function BatchActions({ selected, groups, onBatch }: { selected: number[]; group
   );
 }
 
-function NodeDetail({ node, subscriptionName, groupNames }: { node: ProxyNode; subscriptionName?: string; groupNames: Map<number, string> }) {
-  const checks = runtimeChecks(node);
+function NodeDetail({ node, runtime, subscriptionName, groupNames }: { node: ProxyNode; runtime?: RuntimeNodeState; subscriptionName?: string; groupNames: Map<number, string> }) {
+  const checks = runtimeChecks(node, runtime);
   return (
     <div className="space-y-5">
       <div className="grid gap-3 md:grid-cols-2">
@@ -319,6 +325,18 @@ function NodeDetail({ node, subscriptionName, groupNames }: { node: ProxyNode; s
         <Detail label="传输" value={node.transport_type || '—'} />
         <Detail label="延迟" value={node.latency_ms ? `${node.latency_ms}ms` : '—'} />
         <Detail label="最后检查" value={formatTime(node.last_checked_at)} />
+      </div>
+
+      <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
+        <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-white"><Activity className="h-4 w-4 text-emerald-300" />运行态诊断</div>
+        <div className="grid gap-3 md:grid-cols-2">
+          <Detail label="内存候选池" value={runtime ? runtime.in_candidate_pool ? '在候选池' : '不在候选池' : '未加载'} />
+          <Detail label="内存熔断" value={runtime?.circuit_open ? '熔断中' : '未熔断'} />
+          <Detail label="连续失败" value={String(runtime?.failure_count ?? 0)} />
+          <Detail label="熔断恢复" value={formatTime(runtime?.circuit_until)} />
+          <Detail label="最近失败时间" value={formatTime(runtime?.last_failed_at)} />
+          <Detail label="最近失败原因" value={runtime?.last_failure || '—'} />
+        </div>
       </div>
 
       <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
@@ -380,12 +398,13 @@ function nodeSummary(nodes: ProxyNode[]) {
   };
 }
 
-function runtimeChecks(node: ProxyNode) {
+function runtimeChecks(node: ProxyNode, runtime?: RuntimeNodeState) {
   return [
     { label: '节点已启用', ok: node.enabled },
     { label: 'adapter 或 sing-box 状态为支持', ok: node.adapter_status === 'supported' || node.sing_box_status === 'supported' },
     { label: '健康状态不是死亡', ok: node.alive_status !== 'dead' },
-    { label: '没有连续失败累计', ok: node.fail_count === 0 },
+    { label: '当前没有内存熔断', ok: !runtime?.circuit_open },
+    { label: '当前在运行候选池', ok: Boolean(runtime?.in_candidate_pool) },
   ];
 }
 
