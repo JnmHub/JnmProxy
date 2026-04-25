@@ -15,6 +15,10 @@ type Subscription struct {
 	DownloadBytes          *int64             `json:"download_bytes,omitempty"`
 	TotalBytes             *int64             `json:"total_bytes,omitempty"`
 	ExpireAt               string             `json:"expire_at,omitempty"`
+	NodeCount              int                `json:"node_count"`
+	SingBoxSupportedCount  int                `json:"sing_box_supported_count"`
+	SingBoxErrorCount      int                `json:"sing_box_error_count"`
+	UnsupportedCount       int                `json:"unsupported_count"`
 	CreatedAt              string             `json:"created_at"`
 	UpdatedAt              string             `json:"updated_at"`
 }

@@ -57,6 +57,14 @@ proxies:
 	if refresh["node_count"].(float64) != 1 {
 		t.Fatalf("unexpected refresh response: %#v", refresh)
 	}
+	subscriptions := getJSON(t, handler, "/api/v1/subscriptions").([]any)
+	if len(subscriptions) != 1 {
+		t.Fatalf("expected one subscription, got %d", len(subscriptions))
+	}
+	subscription := subscriptions[0].(map[string]any)
+	if subscription["node_count"].(float64) != 1 {
+		t.Fatalf("expected subscription node_count to be 1: %#v", subscription)
+	}
 
 	nodesResponse := getJSON(t, handler, "/api/v1/nodes")
 	nodes := nodesResponse.([]any)

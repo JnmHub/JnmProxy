@@ -96,22 +96,30 @@ VALUES (?, ?, ?, ?, ?)
 
 func (repo *SubscriptionRepository) Get(ctx context.Context, id int64) (*model.Subscription, error) {
 	row := repo.db.QueryRowContext(ctx, `
-SELECT id, name, url, user_agent, refresh_interval_seconds, enabled, last_refresh_at,
-       next_refresh_at, last_status, last_error, upload_bytes, download_bytes,
-       total_bytes, expire_at, created_at, updated_at
-FROM subscriptions
-WHERE id = ?
+SELECT s.id, s.name, s.url, s.user_agent, s.refresh_interval_seconds, s.enabled, s.last_refresh_at,
+       s.next_refresh_at, s.last_status, s.last_error, s.upload_bytes, s.download_bytes,
+       s.total_bytes, s.expire_at, s.created_at, s.updated_at,
+       (SELECT COUNT(*) FROM proxy_nodes pn WHERE pn.subscription_id = s.id) AS node_count,
+       (SELECT COUNT(*) FROM proxy_nodes pn WHERE pn.subscription_id = s.id AND pn.sing_box_status = 'supported') AS sing_box_supported_count,
+       (SELECT COUNT(*) FROM proxy_nodes pn WHERE pn.subscription_id = s.id AND pn.sing_box_status = 'error') AS sing_box_error_count,
+       (SELECT COUNT(*) FROM proxy_nodes pn WHERE pn.subscription_id = s.id AND pn.sing_box_status = 'unsupported') AS unsupported_count
+FROM subscriptions s
+WHERE s.id = ?
 `, id)
 	return scanSubscription(row)
 }
 
 func (repo *SubscriptionRepository) List(ctx context.Context) ([]model.Subscription, error) {
 	rows, err := repo.db.QueryContext(ctx, `
-SELECT id, name, url, user_agent, refresh_interval_seconds, enabled, last_refresh_at,
-       next_refresh_at, last_status, last_error, upload_bytes, download_bytes,
-       total_bytes, expire_at, created_at, updated_at
-FROM subscriptions
-ORDER BY id DESC
+SELECT s.id, s.name, s.url, s.user_agent, s.refresh_interval_seconds, s.enabled, s.last_refresh_at,
+       s.next_refresh_at, s.last_status, s.last_error, s.upload_bytes, s.download_bytes,
+       s.total_bytes, s.expire_at, s.created_at, s.updated_at,
+       (SELECT COUNT(*) FROM proxy_nodes pn WHERE pn.subscription_id = s.id) AS node_count,
+       (SELECT COUNT(*) FROM proxy_nodes pn WHERE pn.subscription_id = s.id AND pn.sing_box_status = 'supported') AS sing_box_supported_count,
+       (SELECT COUNT(*) FROM proxy_nodes pn WHERE pn.subscription_id = s.id AND pn.sing_box_status = 'error') AS sing_box_error_count,
+       (SELECT COUNT(*) FROM proxy_nodes pn WHERE pn.subscription_id = s.id AND pn.sing_box_status = 'unsupported') AS unsupported_count
+FROM subscriptions s
+ORDER BY s.id DESC
 `)
 	if err != nil {
 		return nil, fmt.Errorf("list subscriptions: %w", err)
@@ -134,12 +142,16 @@ ORDER BY id DESC
 
 func (repo *SubscriptionRepository) ListDue(ctx context.Context, now string) ([]model.Subscription, error) {
 	rows, err := repo.db.QueryContext(ctx, `
-SELECT id, name, url, user_agent, refresh_interval_seconds, enabled, last_refresh_at,
-       next_refresh_at, last_status, last_error, upload_bytes, download_bytes,
-       total_bytes, expire_at, created_at, updated_at
-FROM subscriptions
-WHERE enabled = 1 AND (next_refresh_at IS NULL OR next_refresh_at = '' OR next_refresh_at <= ?)
-ORDER BY id ASC
+SELECT s.id, s.name, s.url, s.user_agent, s.refresh_interval_seconds, s.enabled, s.last_refresh_at,
+       s.next_refresh_at, s.last_status, s.last_error, s.upload_bytes, s.download_bytes,
+       s.total_bytes, s.expire_at, s.created_at, s.updated_at,
+       (SELECT COUNT(*) FROM proxy_nodes pn WHERE pn.subscription_id = s.id) AS node_count,
+       (SELECT COUNT(*) FROM proxy_nodes pn WHERE pn.subscription_id = s.id AND pn.sing_box_status = 'supported') AS sing_box_supported_count,
+       (SELECT COUNT(*) FROM proxy_nodes pn WHERE pn.subscription_id = s.id AND pn.sing_box_status = 'error') AS sing_box_error_count,
+       (SELECT COUNT(*) FROM proxy_nodes pn WHERE pn.subscription_id = s.id AND pn.sing_box_status = 'unsupported') AS unsupported_count
+FROM subscriptions s
+WHERE s.enabled = 1 AND (s.next_refresh_at IS NULL OR s.next_refresh_at = '' OR s.next_refresh_at <= ?)
+ORDER BY s.id ASC
 `, now)
 	if err != nil {
 		return nil, fmt.Errorf("list due subscriptions: %w", err)
@@ -401,7 +413,8 @@ func scanSubscription(row scanner) (*model.Subscription, error) {
 	if err := row.Scan(&subscription.ID, &subscription.Name, &subscription.URL, &subscription.UserAgent,
 		&subscription.RefreshIntervalSeconds, &enabled, &lastRefreshAt, &nextRefreshAt, &lastStatus,
 		&lastError, &uploadBytes, &downloadBytes, &totalBytes, &expireAt, &subscription.CreatedAt,
-		&subscription.UpdatedAt); err != nil {
+		&subscription.UpdatedAt, &subscription.NodeCount, &subscription.SingBoxSupportedCount,
+		&subscription.SingBoxErrorCount, &subscription.UnsupportedCount); err != nil {
 		return nil, fmt.Errorf("scan subscription: %w", err)
 	}
 

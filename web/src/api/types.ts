@@ -42,6 +42,10 @@ export interface Subscription {
   download_bytes?: number;
   total_bytes?: number;
   expire_at?: string;
+  node_count: number;
+  sing_box_supported_count: number;
+  sing_box_error_count: number;
+  unsupported_count: number;
   created_at: string;
   updated_at: string;
 }
