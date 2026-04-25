@@ -20,19 +20,37 @@ import (
 )
 
 type Server struct {
-	DB                  *sql.DB
-	Cache               *cache.Store
-	SubscriptionRepo    *repository.SubscriptionRepository
-	NodeRepo            *repository.NodeRepository
-	GroupRepo           *repository.GroupRepository
-	CredentialRepo      *repository.CredentialRepository
-	HealthRepo          *repository.HealthRepository
-	StatsRepo           *repository.StatsRepository
-	SubscriptionManager *subscription.Manager
-	AuthService         *auth.Service
-	GroupingService     *grouping.Service
-	HealthChecker       scheduler.NodeChecker
-	StatsCollector      *stats.Collector
+	DB                     *sql.DB
+	Cache                  *cache.Store
+	SubscriptionRepo       *repository.SubscriptionRepository
+	NodeRepo               *repository.NodeRepository
+	GroupRepo              *repository.GroupRepository
+	CredentialRepo         *repository.CredentialRepository
+	HealthRepo             *repository.HealthRepository
+	StatsRepo              *repository.StatsRepository
+	SubscriptionManager    *subscription.Manager
+	AuthService            *auth.Service
+	GroupingService        *grouping.Service
+	HealthChecker          scheduler.NodeChecker
+	StatsCollector         *stats.Collector
+	SingBoxStatus          *SingBoxStatus
+	NodeAdapterInvalidator func(nodeID int64)
+}
+
+type SingBoxStatus struct {
+	Enabled                  bool     `json:"enabled"`
+	Version                  string   `json:"version"`
+	ConfigVersion            string   `json:"config_version,omitempty"`
+	Mode                     string   `json:"mode"`
+	PreferNativeHTTPSOCKS    bool     `json:"prefer_native_http_socks"`
+	AdapterConfigured        bool     `json:"adapter_configured"`
+	MaxActiveEngines         int      `json:"max_active_engines"`
+	EngineIdleTimeoutSeconds int      `json:"engine_idle_timeout_seconds"`
+	EngineDialTimeoutSeconds int      `json:"engine_dial_timeout_seconds"`
+	HealthCheckTarget        string   `json:"health_check_target,omitempty"`
+	EnableUDP                bool     `json:"enable_udp"`
+	SupportedProtocols       []string `json:"supported_protocols"`
+	License                  string   `json:"license"`
 }
 
 func (server *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -64,6 +82,10 @@ func (server *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (server *Server) handleSystem(w http.ResponseWriter, r *http.Request, segments []string) {
 	if len(segments) == 2 && segments[1] == "health" && r.Method == http.MethodGet {
 		writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "time": time.Now().UTC().Format(time.RFC3339)})
+		return
+	}
+	if len(segments) == 2 && segments[1] == "sing-box" && r.Method == http.MethodGet {
+		writeJSON(w, http.StatusOK, server.currentSingBoxStatus())
 		return
 	}
 	writeError(w, http.StatusNotFound, "not found")
@@ -230,6 +252,12 @@ func (server *Server) handleNodes(w http.ResponseWriter, r *http.Request, segmen
 		err := server.checkNode(ctx, id)
 		server.reloadCache(ctx)
 		writeNoContent(w, err)
+		return
+	}
+	if len(segments) == 3 && segments[2] == "rebuild-adapter" && r.Method == http.MethodPost {
+		result, err := server.rebuildNodeAdapter(ctx, id)
+		server.reloadCache(ctx)
+		writeResult(w, result, err)
 		return
 	}
 	writeError(w, http.StatusNotFound, "not found")
@@ -479,6 +507,42 @@ func (server *Server) checkNode(ctx context.Context, id int64) error {
 	result.NodeID = id
 	result.CheckedAt = time.Now().UTC().Format(time.RFC3339)
 	return server.HealthRepo.RecordNodeHealth(ctx, result)
+}
+
+func (server *Server) rebuildNodeAdapter(ctx context.Context, id int64) (map[string]any, error) {
+	if _, err := server.NodeRepo.Get(ctx, id); err != nil {
+		return nil, err
+	}
+	status := "adapter_not_configured"
+	if server.NodeAdapterInvalidator != nil {
+		server.NodeAdapterInvalidator(id)
+		status = "adapter_rebuild_scheduled"
+	}
+	return map[string]any{"node_id": id, "status": status}, nil
+}
+
+func (server *Server) currentSingBoxStatus() SingBoxStatus {
+	status := SingBoxStatus{
+		Enabled:            false,
+		AdapterConfigured:  server.NodeAdapterInvalidator != nil,
+		SupportedProtocols: defaultSingBoxSupportedProtocols(),
+		License:            "GPL via github.com/sagernet/sing-box",
+	}
+	if server.SingBoxStatus != nil {
+		status = *server.SingBoxStatus
+		status.AdapterConfigured = server.NodeAdapterInvalidator != nil
+		if len(status.SupportedProtocols) == 0 {
+			status.SupportedProtocols = defaultSingBoxSupportedProtocols()
+		}
+		if status.License == "" {
+			status.License = "GPL via github.com/sagernet/sing-box"
+		}
+	}
+	return status
+}
+
+func defaultSingBoxSupportedProtocols() []string {
+	return []string{"ss", "shadowsocks", "vmess", "vless", "trojan", "hysteria2", "hy2", "tuic", "http", "https", "socks", "socks5", "socks5h"}
 }
 
 func (server *Server) reloadCache(ctx context.Context) {

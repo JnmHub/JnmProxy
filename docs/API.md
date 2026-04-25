@@ -20,6 +20,30 @@ API 前缀：`/api/v1`
 {"status":"ok","time":"2026-04-24T12:00:00Z"}
 ```
 
+### `GET /system/sing-box`
+
+返回 sing-box 内嵌适配状态和配置摘要。
+
+响应：
+
+```json
+{
+  "enabled": true,
+  "version": "v1.13.8",
+  "config_version": "v1.13.8",
+  "mode": "auto",
+  "prefer_native_http_socks": true,
+  "adapter_configured": true,
+  "max_active_engines": 64,
+  "engine_idle_timeout_seconds": 600,
+  "engine_dial_timeout_seconds": 30,
+  "health_check_target": "www.gstatic.com:443",
+  "enable_udp": false,
+  "supported_protocols": ["ss", "vmess", "vless", "trojan", "hysteria2", "tuic"],
+  "license": "GPL via github.com/sagernet/sing-box"
+}
+```
+
 ## 订阅
 
 ### `POST /subscriptions`
@@ -61,12 +85,23 @@ API 前缀：`/api/v1`
 响应：
 
 ```json
-{"subscription_id":1,"node_count":12,"http_status":200}
+{
+  "subscription_id": 1,
+  "node_count": 12,
+  "http_status": 200,
+  "sing_box_supported_count": 10,
+  "sing_box_error_count": 1,
+  "unsupported_count": 1
+}
 ```
 
 ### `GET /subscriptions/{id}/refresh-logs`
 
-订阅刷新日志。
+订阅刷新日志，包含 sing-box 转换统计：
+
+- `sing_box_supported_count`
+- `sing_box_error_count`
+- `unsupported_count`
 
 ### `GET /subscriptions/{id}/nodes`
 
@@ -88,6 +123,15 @@ API 前缀：`/api/v1`
 
 节点详情。
 
+节点对象包含 sing-box 适配字段：
+
+- `sing_box_outbound_json`
+- `sing_box_status`：`supported`、`unsupported`、`error`
+- `sing_box_error`
+- `sing_box_version`
+- `udp_supported`
+- `transport_type`
+
 ### `PUT /nodes/{id}`
 
 更新节点启用状态。
@@ -101,6 +145,16 @@ API 前缀：`/api/v1`
 ### `POST /nodes/{id}/check`
 
 检查单个节点健康状态。
+
+### `POST /nodes/{id}/rebuild-adapter`
+
+关闭该节点已缓存的 sing-box 适配器，下次使用节点时按数据库最新配置重建。
+
+响应：
+
+```json
+{"node_id":1,"status":"adapter_rebuild_scheduled"}
+```
 
 ### `POST /nodes/check`
 
@@ -223,6 +277,35 @@ API 前缀：`/api/v1`
 }
 ```
 
+## sing-box 协议说明
+
+当前后端不要求系统安装 sing-box 命令，协议能力来自 Go 依赖 `github.com/sagernet/sing-box v1.13.8`。
+
+MVP 第一批 TCP 出站支持：
+
+- `ss`
+- `shadowsocks`
+- `vmess`
+- `vless`
+- `trojan`
+- `hysteria2`
+- `hy2`
+- `tuic`
+- `http`
+- `https`
+- `socks`
+- `socks5`
+- `socks5h`
+
+当前不开放 sing-box 原生管理接口，不导入机场规则、分流规则和策略组规则。HTTP/SOCKS5 入站认证、节点调度、健康检查和流量统计仍由 JnmProxy 控制。
+
+## 故障排查
+
+- `sing_box_status=error`：查看 `sing_box_error`，常见原因是订阅字段缺失、协议字段不兼容或配置无法初始化。
+- `alive_status=dead`：健康检查失败，该节点不会进入运行时调度缓存；恢复后会重新参与调度。
+- 节点更新后仍走旧配置：调用 `POST /nodes/{id}/rebuild-adapter`。
+- 当前 UDP 入站代理、TUN、透明代理和系统路由不属于 MVP。
+
 字段说明：
 
 - `bind_mode`：`all`、`group`、`node`
@@ -270,4 +353,3 @@ API 前缀：`/api/v1`
   "download_bytes": 5678
 }
 ```
-

@@ -66,6 +66,19 @@ proxies:
 	node := nodes[0].(map[string]any)
 	nodeID := int64(node["id"].(float64))
 
+	var rebuiltNodeID int64
+	handler.NodeAdapterInvalidator = func(id int64) {
+		rebuiltNodeID = id
+	}
+	singBoxStatus := getJSON(t, handler, "/api/v1/system/sing-box").(map[string]any)
+	if singBoxStatus["enabled"] != true || singBoxStatus["adapter_configured"] != true {
+		t.Fatalf("unexpected sing-box status: %#v", singBoxStatus)
+	}
+	rebuild := postJSON(t, handler, "/api/v1/nodes/"+itoa(nodeID)+"/rebuild-adapter", map[string]any{})
+	if rebuild["status"] != "adapter_rebuild_scheduled" || rebuiltNodeID != nodeID {
+		t.Fatalf("unexpected rebuild response=%#v rebuilt=%d", rebuild, rebuiltNodeID)
+	}
+
 	groupID := postJSONValue[int64](t, handler, "/api/v1/groups", map[string]any{"name": "手动分组"}, "id")
 	request(t, handler, http.MethodPost, "/api/v1/groups/"+itoa(groupID)+"/nodes", map[string]any{"node_ids": []int64{nodeID}}, http.StatusNoContent)
 
@@ -110,6 +123,7 @@ func newTestServer(t *testing.T, store *sql.DB) *Server {
 		AuthService:         auth.NewService(credentialRepo),
 		GroupingService:     grouping.NewService(groupRepo),
 		StatsCollector:      stats.NewCollector(time.Now),
+		SingBoxStatus:       &SingBoxStatus{Enabled: true, Version: "v1.13.8", Mode: "auto"},
 	}
 }
 

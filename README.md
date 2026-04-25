@@ -13,9 +13,12 @@ JnmProxy 是一个 Go 后端代理池系统，基于机场订阅链接维护代�
 - 支持手动分组、批量分组、关键词自动分组。
 - 支持多个代理访问凭证，凭证可绑定全部节点、分组或单个节点。
 - HTTP 和 SOCKS5 入站代理强制用户名密码认证。
-- 当前出站适配已支持 HTTP、HTTPS、SOCKS5 上游代理。
+- 原生出站适配支持 HTTP、HTTPS、SOCKS5 上游代理。
+- 已内嵌 `github.com/sagernet/sing-box v1.13.8` 作为 Go 依赖，不要求系统额外安装 sing-box 命令。
+- sing-box 出站适配支持 `ss`、`shadowsocks`、`vmess`、`vless`、`trojan`、`hysteria2`、`hy2`、`tuic`、`http`、`https`、`socks`、`socks5`、`socks5h` 的 TCP 转发链路。
+- 订阅刷新会为节点生成 `sing_box_outbound_json`、`sing_box_status`、`sing_box_error`、`sing_box_version`、`udp_supported`、`transport_type` 等适配字段。
 - 流量统计先写内存，再定时批量写入 SQLite。
-- 定时刷新订阅和节点健康检查已接入。
+- 定时刷新订阅和节点健康检查已接入，健康检查可覆盖 sing-box 节点。
 - 提供 `/api/v1` 后端管理 API。
 
 ## 本地启动
@@ -53,6 +56,18 @@ curl -X POST http://127.0.0.1:8080/api/v1/subscriptions \
 curl -X POST http://127.0.0.1:8080/api/v1/subscriptions/1/refresh
 ```
 
+查看 sing-box 运行配置摘要：
+
+```bash
+curl http://127.0.0.1:8080/api/v1/system/sing-box
+```
+
+重建单个节点的 sing-box 适配器：
+
+```bash
+curl -X POST http://127.0.0.1:8080/api/v1/nodes/1/rebuild-adapter
+```
+
 创建凭证：
 
 ```bash
@@ -76,7 +91,15 @@ curl --proxy socks5h://15376259491:00hhg5210@127.0.0.1:1080 https://example.com
 ## 重要说明
 
 - 不引入 Clash 内核。
-- 后续协议增强计划将引入 `github.com/sagernet/sing-box` Go 依赖，sing-box 使用 GPL 系列许可证，分发二进制前需要遵守对应许可证要求。
+- 已引入 `github.com/sagernet/sing-box` Go 依赖作为内嵌协议能力；sing-box 使用 GPL 系列许可证，分发二进制前需要遵守对应许可证要求。
 - 不保存订阅规则、分流规则和策略组规则。
 - 未支持的节点协议会入库，但默认不参与代理调度。
+- 当前 MVP 以 TCP 代理为主，SOCKS5 UDP ASSOCIATE、透明代理、TUN 和系统路由不在本阶段范围内。
 - API 当前建议只监听本地地址，后续前端阶段再补管理端鉴权。
+
+## sing-box 故障排查
+
+- `sing_box_status=error`：查看节点的 `sing_box_error`，通常是订阅字段缺失、协议字段不兼容或 sing-box 配置无法初始化。
+- `alive_status=dead`：健康检查无法通过该节点连接目标，节点会暂时从运行时缓存候选中移除，后续健康检查恢复后会重新进入调度。
+- 节点订阅更新后仍异常：调用 `POST /api/v1/nodes/{id}/rebuild-adapter` 关闭该节点旧适配器，下次请求会按最新配置重建。
+- HTTP/HTTPS/SOCKS5 简单协议默认优先走 JnmProxy 原生出站；复杂协议走 sing-box 出站。
