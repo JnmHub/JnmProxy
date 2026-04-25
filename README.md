@@ -90,6 +90,45 @@ npm run build
 GO_TAGS="" OUTPUT=./bin/jnmproxy ./scripts/build-release.sh
 ```
 
+全平台打包：
+
+```bash
+./scripts/build-all-platforms.sh
+```
+
+默认输出到 `release/packages`，包含：
+
+- `linux/amd64`
+- `linux/arm64`
+- `darwin/amd64`
+- `darwin/arm64`
+- `windows/amd64`
+- `windows/arm64`
+
+全平台脚本默认使用：
+
+```bash
+GO_TAGS="sqlite_purego with_quic with_utls"
+CGO_ENABLED=0
+```
+
+这样可以在 Linux 上直接交叉编译 macOS、Windows、Linux 包，不需要系统安装 Darwin/Windows 交叉 C 编译器。
+
+如果要只构建不重新打前端、不跑测试：
+
+```bash
+RUN_WEB_BUILD=0 RUN_TESTS=0 ./scripts/build-all-platforms.sh
+```
+
+## SQLite 驱动说明
+
+项目支持两种 SQLite 驱动：
+
+- 默认构建：`github.com/mattn/go-sqlite3`，成熟稳定，性能通常更好，但依赖 CGO，本机需要 C 编译器，跨平台打包更麻烦。
+- 全平台打包：`modernc.org/sqlite`，纯 Go 实现，通过 `sqlite_purego` 构建标签启用，不依赖 CGO，适合一次打 macOS/Windows/Linux 多平台包。
+
+两者使用同一个 SQLite 数据库文件格式，表结构和迁移逻辑一致。正常功能没有区别；主要影响是“怎么编译”和极端高并发场景下的性能差异。本项目已限制 SQLite 单连接写入，管理后台和本地代理池场景优先选择可部署性更好的纯 Go 打包方式。
+
 ## API 示例
 
 新增订阅：
