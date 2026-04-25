@@ -54,7 +54,7 @@ export function SubscriptionsPage() {
       <Card>
         <CardHeader title="订阅列表" description="管理机场订阅链接、刷新节点和查看用量。" action={<Button variant="primary" onClick={openCreate}><Plus className="h-4 w-4" />新增订阅</Button>} />
         {subscriptionsQuery.isLoading ? <LoadingState /> : (
-          <DataTable columns={['名称', 'URL', '状态', '用量', '刷新时间', '操作']} empty={!subscriptionsQuery.data?.length}>
+          <DataTable columns={['名称', 'URL', '状态', '用量', '到期时间', '刷新时间', '操作']} empty={!subscriptionsQuery.data?.length}>
             {(subscriptionsQuery.data ?? []).map((item) => {
               const used = (item.upload_bytes ?? 0) + (item.download_bytes ?? 0);
               return (
@@ -63,6 +63,7 @@ export function SubscriptionsPage() {
                   <td className="px-4 py-3 font-mono text-xs text-slate-400">{maskURL(item.url)}</td>
                   <td className="px-4 py-3"><Badge value={item.last_status} /></td>
                   <td className="px-4 py-3"><div className="text-sm">{formatBytes(used)} / {formatBytes(item.total_bytes)}</div><div className="mt-1 h-1.5 w-32 overflow-hidden rounded-full bg-slate-800"><div className="h-full bg-blue-500" style={{ width: `${usagePercent(used, item.total_bytes)}%` }} /></div></td>
+                  <td className="px-4 py-3 text-xs text-slate-400">{formatTime(item.expire_at)}</td>
                   <td className="px-4 py-3 text-xs text-slate-400"><div>{formatTime(item.last_refresh_at)}</div><div>下次 {formatTime(item.next_refresh_at)}</div></td>
                   <td className="px-4 py-3"><div className="flex flex-wrap gap-2"><Button onClick={() => refreshMutation.mutate(item.id)}><RefreshCw className="h-4 w-4" />刷新</Button><Button onClick={() => openEdit(item)}><Edit3 className="h-4 w-4" />编辑</Button><Button variant="danger" onClick={() => setConfirm({ title: '删除订阅', message: `确定删除订阅「${item.name}」吗？该订阅下节点也会删除。`, danger: true, confirmText: '删除', onConfirm: () => deleteMutation.mutate(item.id) })}><Trash2 className="h-4 w-4" />删除</Button></div></td>
                 </tr>

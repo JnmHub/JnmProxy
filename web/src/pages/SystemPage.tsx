@@ -26,8 +26,16 @@ export function SystemPage() {
           {singBoxQuery.isLoading ? <LoadingState title="正在读取 sing-box" /> : <div className="space-y-3 text-sm">
             <Row label="启用"><Badge value={singBox?.enabled ? 'supported' : 'unsupported'}>{singBox?.enabled ? '是' : '否'}</Badge></Row>
             <Row label="版本"><span className="font-mono">{singBox?.version ?? '—'}</span></Row>
+            <Row label="配置版本"><span className="font-mono">{singBox?.config_version ?? '—'}</span></Row>
             <Row label="模式"><span className="font-mono">{singBox?.mode ?? '—'}</span></Row>
+            <Row label="优先原生 HTTP/SOCKS"><Badge value={singBox?.prefer_native_http_socks ? 'supported' : 'unsupported'}>{singBox?.prefer_native_http_socks ? '是' : '否'}</Badge></Row>
+            <Row label="Adapter 配置"><Badge value={singBox?.adapter_configured ? 'supported' : 'unsupported'}>{singBox?.adapter_configured ? '已配置' : '未配置'}</Badge></Row>
             <Row label="QUIC"><Badge value={singBox?.quic_enabled ? 'supported' : 'unsupported'}>{singBox?.quic_enabled ? '已启用' : '未启用'}</Badge></Row>
+            <Row label="UDP"><Badge value={singBox?.enable_udp ? 'supported' : 'unsupported'}>{singBox?.enable_udp ? '已启用' : '未启用'}</Badge></Row>
+            <Row label="最大引擎"><span className="font-mono">{singBox?.max_active_engines ?? '—'}</span></Row>
+            <Row label="空闲超时"><span className="font-mono">{singBox?.engine_idle_timeout_seconds ? `${singBox.engine_idle_timeout_seconds}s` : '—'}</span></Row>
+            <Row label="拨号超时"><span className="font-mono">{singBox?.engine_dial_timeout_seconds ? `${singBox.engine_dial_timeout_seconds}s` : '—'}</span></Row>
+            <Row label="健康检查目标"><span className="font-mono text-xs">{singBox?.health_check_target ?? '—'}</span></Row>
             <Row label="许可证"><span className="text-slate-300">{singBox?.license ?? '—'}</span></Row>
           </div>}
         </Card>

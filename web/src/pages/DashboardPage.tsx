@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { Activity, Database, Network, Rss, ShieldCheck, TrafficCone } from 'lucide-react';
+import { Activity, CheckCircle2, Database, Network, Rss, ShieldCheck, TrafficCone, XCircle } from 'lucide-react';
 import { getSingBoxStatus, getSystemHealth } from '../api/system';
 import { getTrafficOverview } from '../api/stats';
 import { listSubscriptions } from '../api/subscriptions';
@@ -18,6 +18,7 @@ export function DashboardPage() {
   const nodesQuery = useQuery({ queryKey: ['nodes'], queryFn: () => listNodes() });
 
   const nodes = nodesQuery.data ?? [];
+  const subscriptions = subscriptionsQuery.data ?? [];
   const aliveCount = nodes.filter((node) => node.alive_status === 'alive').length;
   const deadCount = nodes.filter((node) => node.alive_status === 'dead').length;
 
@@ -30,9 +31,13 @@ export function DashboardPage() {
       </div>
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <MetricCard title="连接数" value={compactNumber(statsQuery.data?.connections)} hint="累计连接" icon={<TrafficCone className="h-5 w-5" />} />
+        <MetricCard title="成功连接" value={compactNumber(statsQuery.data?.success_connections)} hint="代理转发成功次数" icon={<CheckCircle2 className="h-5 w-5 text-emerald-300" />} />
+        <MetricCard title="失败连接" value={compactNumber(statsQuery.data?.failed_connections)} hint="认证或转发失败次数" icon={<XCircle className="h-5 w-5 text-red-300" />} />
+        <MetricCard title="订阅数量" value={compactNumber(subscriptions.length)} hint="已保存订阅链接" icon={<Rss className="h-5 w-5" />} />
         <MetricCard title="上传流量" value={formatBytes(statsQuery.data?.upload_bytes)} hint="内存统计会先 flush" icon={<Activity className="h-5 w-5" />} />
         <MetricCard title="下载流量" value={formatBytes(statsQuery.data?.download_bytes)} hint="所有入口统一统计" icon={<Database className="h-5 w-5" />} />
         <MetricCard title="节点数量" value={compactNumber(nodes.length)} hint={`可用 ${aliveCount} / 死亡 ${deadCount}`} icon={<Network className="h-5 w-5" />} />
+        <MetricCard title="异常节点" value={compactNumber(deadCount)} hint={`未知 ${nodes.length - aliveCount - deadCount}`} icon={<XCircle className="h-5 w-5 text-amber-300" />} />
       </div>
       <div className="grid gap-4 xl:grid-cols-3">
         <Card>
@@ -51,7 +56,7 @@ export function DashboardPage() {
             <div className="pb-2 text-sm text-slate-500">条订阅</div>
           </div>
           <div className="mt-5 flex flex-wrap gap-2">
-            {(subscriptionsQuery.data ?? []).slice(0, 6).map((item) => <Badge key={item.id} value={item.last_status}>{item.name}</Badge>)}
+            {subscriptions.slice(0, 6).map((item) => <Badge key={item.id} value={item.last_status}>{item.name}</Badge>)}
           </div>
         </Card>
         <Card>
