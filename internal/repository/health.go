@@ -31,7 +31,7 @@ SELECT id, subscription_id, subscription_node_key, name, protocol, server, port,
        sing_box_version, udp_supported, transport_type, adapter_status, enabled, alive_status, last_seen_at,
        last_checked_at, latency_ms, fail_count, created_at, updated_at
 FROM proxy_nodes
-WHERE enabled = 1 AND adapter_status = 'supported'
+WHERE enabled = 1 AND (adapter_status = 'supported' OR sing_box_status = 'supported')
 ORDER BY id ASC
 `)
 	if err != nil {

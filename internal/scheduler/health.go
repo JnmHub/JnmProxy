@@ -48,15 +48,7 @@ func (checker *OutboundHealthChecker) Check(ctx context.Context, node model.Prox
 		if dialer == nil {
 			dialer = outbound.NewDialer(checker.Timeout)
 		}
-		conn, err = dialer.DialContext(checkCtx, cache.NodeSnapshot{
-			ID:             node.ID,
-			SubscriptionID: node.SubscriptionID,
-			Name:           node.Name,
-			Protocol:       node.Protocol,
-			Server:         node.Server,
-			Port:           node.Port,
-			RawConfigJSON:  node.RawConfigJSON,
-		}, checker.TargetAddress)
+		conn, err = dialer.DialContext(checkCtx, nodeSnapshot(node), checker.TargetAddress)
 	}
 
 	if err != nil {
@@ -70,5 +62,23 @@ func (checker *OutboundHealthChecker) Check(ctx context.Context, node model.Prox
 	return repository.NodeHealthResult{
 		Status:    "alive",
 		LatencyMS: &latency,
+	}
+}
+
+func nodeSnapshot(node model.ProxyNode) cache.NodeSnapshot {
+	return cache.NodeSnapshot{
+		ID:                  node.ID,
+		SubscriptionID:      node.SubscriptionID,
+		Name:                node.Name,
+		Protocol:            node.Protocol,
+		Server:              node.Server,
+		Port:                node.Port,
+		RawConfigJSON:       node.RawConfigJSON,
+		SingBoxOutboundJSON: node.SingBoxOutboundJSON,
+		SingBoxStatus:       node.SingBoxStatus,
+		SingBoxError:        node.SingBoxError,
+		SingBoxVersion:      node.SingBoxVersion,
+		UDPSupported:        node.UDPSupported,
+		TransportType:       node.TransportType,
 	}
 }
