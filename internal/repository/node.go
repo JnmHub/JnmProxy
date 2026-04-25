@@ -18,6 +18,7 @@ type NodeListFilter struct {
 	GroupID        int64
 	Protocol       string
 	AliveStatus    string
+	SingBoxStatus  string
 	Enabled        *bool
 }
 
@@ -34,7 +35,16 @@ SELECT id, subscription_id, subscription_node_key, name, protocol, server, port,
 FROM proxy_nodes
 WHERE id = ?
 `, id)
-	return scanProxyNode(row)
+	node, err := scanProxyNode(row)
+	if err != nil {
+		return nil, err
+	}
+	groupIDs, err := repo.listNodeGroupIDs(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	node.GroupIDs = groupIDs
+	return node, nil
 }
 
 func (repo *NodeRepository) List(ctx context.Context, filter NodeListFilter) ([]model.ProxyNode, error) {
@@ -65,6 +75,10 @@ FROM proxy_nodes n
 		conditions = append(conditions, "n.alive_status = ?")
 		args = append(args, filter.AliveStatus)
 	}
+	if filter.SingBoxStatus != "" {
+		conditions = append(conditions, "n.sing_box_status = ?")
+		args = append(args, filter.SingBoxStatus)
+	}
 	if filter.Enabled != nil {
 		conditions = append(conditions, "n.enabled = ?")
 		args = append(args, boolToInt(*filter.Enabled))
@@ -91,7 +105,73 @@ FROM proxy_nodes n
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate nodes: %w", err)
 	}
+	if err := repo.attachNodeGroupIDs(ctx, nodes); err != nil {
+		return nil, err
+	}
 	return nodes, nil
+}
+
+func (repo *NodeRepository) listNodeGroupIDs(ctx context.Context, nodeID int64) ([]int64, error) {
+	rows, err := repo.db.QueryContext(ctx, `
+SELECT group_id
+FROM proxy_node_groups
+WHERE node_id = ?
+ORDER BY group_id ASC
+`, nodeID)
+	if err != nil {
+		return nil, fmt.Errorf("list node group ids: %w", err)
+	}
+	defer rows.Close()
+
+	var groupIDs []int64
+	for rows.Next() {
+		var groupID int64
+		if err := rows.Scan(&groupID); err != nil {
+			return nil, fmt.Errorf("scan node group id: %w", err)
+		}
+		groupIDs = append(groupIDs, groupID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate node group ids: %w", err)
+	}
+	return groupIDs, nil
+}
+
+func (repo *NodeRepository) attachNodeGroupIDs(ctx context.Context, nodes []model.ProxyNode) error {
+	if len(nodes) == 0 {
+		return nil
+	}
+	placeholders := strings.TrimRight(strings.Repeat("?,", len(nodes)), ",")
+	args := make([]any, 0, len(nodes))
+	for _, node := range nodes {
+		args = append(args, node.ID)
+	}
+	rows, err := repo.db.QueryContext(ctx, fmt.Sprintf(`
+SELECT node_id, group_id
+FROM proxy_node_groups
+WHERE node_id IN (%s)
+ORDER BY group_id ASC
+`, placeholders), args...)
+	if err != nil {
+		return fmt.Errorf("attach node group ids: %w", err)
+	}
+	defer rows.Close()
+
+	byNodeID := make(map[int64][]int64, len(nodes))
+	for rows.Next() {
+		var nodeID, groupID int64
+		if err := rows.Scan(&nodeID, &groupID); err != nil {
+			return fmt.Errorf("scan attached node group id: %w", err)
+		}
+		byNodeID[nodeID] = append(byNodeID[nodeID], groupID)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate attached node group ids: %w", err)
+	}
+	for index := range nodes {
+		nodes[index].GroupIDs = byNodeID[nodes[index].ID]
+	}
+	return nil
 }
 
 func (repo *NodeRepository) SetEnabled(ctx context.Context, ids []int64, enabled bool) error {

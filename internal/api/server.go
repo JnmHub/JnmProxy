@@ -197,6 +197,7 @@ func (server *Server) handleNodes(w http.ResponseWriter, r *http.Request, segmen
 		filter.GroupID = queryInt64(r, "group_id")
 		filter.Protocol = r.URL.Query().Get("protocol")
 		filter.AliveStatus = r.URL.Query().Get("alive_status")
+		filter.SingBoxStatus = r.URL.Query().Get("sing_box_status")
 		if value := r.URL.Query().Get("enabled"); value != "" {
 			enabled := value == "1" || strings.EqualFold(value, "true")
 			filter.Enabled = &enabled

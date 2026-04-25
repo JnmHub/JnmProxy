@@ -42,6 +42,7 @@ type ProxyNode struct {
 	LastCheckedAt       string        `json:"last_checked_at,omitempty"`
 	LatencyMS           *int64        `json:"latency_ms,omitempty"`
 	FailCount           int           `json:"fail_count"`
+	GroupIDs            []int64       `json:"group_ids,omitempty"`
 	CreatedAt           string        `json:"created_at"`
 	UpdatedAt           string        `json:"updated_at"`
 }

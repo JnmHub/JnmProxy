@@ -1,11 +1,12 @@
 import { apiRequest } from './client';
-import type { AliveStatus, ProxyNode } from './types';
+import type { AdapterStatus, AliveStatus, ProxyNode } from './types';
 
 export interface NodeFilter {
   subscription_id?: number;
   group_id?: number;
   protocol?: string;
   alive_status?: AliveStatus | '';
+  sing_box_status?: AdapterStatus | '';
   enabled?: boolean | '';
 }
 

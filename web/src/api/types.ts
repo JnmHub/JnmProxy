@@ -93,6 +93,7 @@ export interface ProxyNode {
   last_checked_at?: string;
   latency_ms?: number;
   fail_count: number;
+  group_ids?: number[];
   created_at: string;
   updated_at: string;
 }

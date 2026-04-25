@@ -81,6 +81,19 @@ proxies:
 
 	groupID := postJSONValue[int64](t, handler, "/api/v1/groups", map[string]any{"name": "手动分组"}, "id")
 	request(t, handler, http.MethodPost, "/api/v1/groups/"+itoa(groupID)+"/nodes", map[string]any{"node_ids": []int64{nodeID}}, http.StatusNoContent)
+	groupNodes := getJSON(t, handler, "/api/v1/nodes?group_id="+itoa(groupID)).([]any)
+	if len(groupNodes) != 1 {
+		t.Fatalf("expected one grouped node, got %d", len(groupNodes))
+	}
+	groupNode := groupNodes[0].(map[string]any)
+	groupIDs := groupNode["group_ids"].([]any)
+	if len(groupIDs) != 1 || int64(groupIDs[0].(float64)) != groupID {
+		t.Fatalf("unexpected group ids on node response: %#v", groupNode)
+	}
+	statusFilteredNodes := getJSON(t, handler, "/api/v1/nodes?sing_box_status="+groupNode["sing_box_status"].(string)).([]any)
+	if len(statusFilteredNodes) == 0 {
+		t.Fatalf("expected sing-box status filter to return nodes")
+	}
 
 	credential := postJSON(t, handler, "/api/v1/credentials", map[string]any{
 		"username":         "user",
