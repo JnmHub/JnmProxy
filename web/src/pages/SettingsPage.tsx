@@ -1,6 +1,8 @@
+import { useQuery } from '@tanstack/react-query';
 import { KeyRound, Save, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { getAdminToken, saveAdminToken } from '../api/client';
+import { getProxyStatus } from '../api/system';
 import { Button } from '../components/ui/Button';
 import { Card, CardHeader } from '../components/ui/Card';
 import { Field, Input } from '../components/ui/Input';
@@ -8,6 +10,8 @@ import { Field, Input } from '../components/ui/Input';
 export function SettingsPage() {
   const [token, setToken] = useState(getAdminToken());
   const [saved, setSaved] = useState(false);
+  const proxyStatusQuery = useQuery({ queryKey: ['system', 'proxy'], queryFn: getProxyStatus });
+  const proxyStatus = proxyStatusQuery.data;
 
   const save = () => {
     saveAdminToken(token);
@@ -45,12 +49,13 @@ export function SettingsPage() {
       </Card>
 
       <Card>
-        <CardHeader title="默认地址" description="这些地址来自默认配置，可在 config.yaml 中调整。" />
+        <CardHeader title="当前地址" description="这些地址来自当前后端加载的配置文件，不再是写死的默认值。" />
         <div className="space-y-3 text-sm text-slate-400">
-          <p>管理后台/API：<code className="text-slate-200">127.0.0.1:8080</code></p>
-          <p>HTTP 代理默认地址：<code className="text-slate-200">127.0.0.1:1081</code></p>
-          <p>SOCKS5 默认地址：<code className="text-slate-200">127.0.0.1:1080</code></p>
-          <p>配置文件：<code className="text-slate-200">config.yaml</code></p>
+          <p>管理后台/API：<code className="text-slate-200">{proxyStatus?.api_addr || '加载中...'}</code></p>
+          <p>HTTP 代理地址：<code className="text-slate-200">{proxyStatus?.http_addr || '加载中...'}</code></p>
+          <p>SOCKS5 地址：<code className="text-slate-200">{proxyStatus?.socks_addr || '加载中...'}</code></p>
+          <p>配置文件：<code className="text-slate-200">{proxyStatus?.config_path || '加载中...'}</code></p>
+          {proxyStatusQuery.isError ? <p className="text-red-300">读取当前配置失败，请确认管理 API Token 是否正确。</p> : null}
         </div>
       </Card>
     </div>

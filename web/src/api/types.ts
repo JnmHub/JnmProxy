@@ -10,8 +10,10 @@ export interface SystemHealth {
 }
 
 export interface SystemProxyStatus {
+  api_addr: string;
   http_addr: string;
   socks_addr: string;
+  config_path: string;
 }
 
 export interface SingBoxStatus {

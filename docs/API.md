@@ -75,8 +75,10 @@ API 前缀：`/api/v1`
 
 ```json
 {
+  "api_addr": "127.0.0.1:8080",
   "http_addr": "127.0.0.1:1081",
-  "socks_addr": "127.0.0.1:1080"
+  "socks_addr": "127.0.0.1:1080",
+  "config_path": "config.yaml"
 }
 ```
 

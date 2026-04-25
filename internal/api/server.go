@@ -46,8 +46,10 @@ type Server struct {
 }
 
 type ProxyStatus struct {
-	HTTPAddr  string `json:"http_addr"`
-	SOCKSAddr string `json:"socks_addr"`
+	APIAddr    string `json:"api_addr"`
+	HTTPAddr   string `json:"http_addr"`
+	SOCKSAddr  string `json:"socks_addr"`
+	ConfigPath string `json:"config_path"`
 }
 
 type SingBoxStatus struct {

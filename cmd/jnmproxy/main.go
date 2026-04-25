@@ -147,8 +147,10 @@ func main() {
 		HealthChecker:       backgroundScheduler.HealthChecker,
 		StatsCollector:      statsCollector,
 		ProxyStatus: &api.ProxyStatus{
-			HTTPAddr:  cfg.Proxy.HTTPAddr,
-			SOCKSAddr: cfg.Proxy.SOCKSAddr,
+			APIAddr:    cfg.Server.APIAddr,
+			HTTPAddr:   cfg.Proxy.HTTPAddr,
+			SOCKSAddr:  cfg.Proxy.SOCKSAddr,
+			ConfigPath: *configPath,
 		},
 		SingBoxStatus: &api.SingBoxStatus{
 			Enabled:                  cfg.SingBox.Enabled,
