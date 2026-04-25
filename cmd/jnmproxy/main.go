@@ -24,6 +24,7 @@ import (
 	"github.com/jnmproxy/jnmproxy/internal/singbox"
 	"github.com/jnmproxy/jnmproxy/internal/stats"
 	"github.com/jnmproxy/jnmproxy/internal/subscription"
+	"github.com/jnmproxy/jnmproxy/internal/webui"
 )
 
 func main() {
@@ -121,40 +122,46 @@ func main() {
 		HealthCheckInterval: time.Duration(cfg.Scheduler.HealthCheckIntervalSeconds) * time.Second,
 		Logger:              logger,
 	}
-	apiServer := &http.Server{
-		Addr: cfg.Server.APIAddr,
-		Handler: &api.Server{
-			DB:                  store,
-			Cache:               runtimeCache,
-			SubscriptionRepo:    subscriptionRepo,
-			NodeRepo:            nodeRepo,
-			GroupRepo:           groupRepo,
-			CredentialRepo:      credentialRepo,
-			HealthRepo:          healthRepo,
-			StatsRepo:           statsRepo,
-			SubscriptionManager: subscriptionManager,
-			AuthService:         authService,
-			GroupingService:     groupingService,
-			HealthChecker:       backgroundScheduler.HealthChecker,
-			StatsCollector:      statsCollector,
-			SingBoxStatus: &api.SingBoxStatus{
-				Enabled:                  cfg.SingBox.Enabled,
-				Version:                  singbox.Version,
-				ConfigVersion:            cfg.SingBox.Version,
-				Mode:                     cfg.SingBox.Mode,
-				PreferNativeHTTPSOCKS:    cfg.SingBox.PreferNativeHTTPSOCKS,
-				MaxActiveEngines:         cfg.SingBox.MaxActiveEngines,
-				EngineIdleTimeoutSeconds: cfg.SingBox.EngineIdleTimeoutSeconds,
-				EngineDialTimeoutSeconds: cfg.SingBox.EngineDialTimeoutSeconds,
-				HealthCheckTarget:        cfg.SingBox.HealthCheckTarget,
-				EnableUDP:                cfg.SingBox.EnableUDP,
-				QUICEnabled:              singbox.QUICEnabled(),
-				UTLSEnabled:              singbox.UTLSEnabled(),
-				SupportedProtocols:       singbox.SupportedProtocols(),
-				License:                  "GPL via github.com/sagernet/sing-box",
-			},
-			NodeAdapterInvalidator: singBoxNodeInvalidator,
+	apiHandler := &api.Server{
+		DB:                  store,
+		Cache:               runtimeCache,
+		SubscriptionRepo:    subscriptionRepo,
+		NodeRepo:            nodeRepo,
+		GroupRepo:           groupRepo,
+		CredentialRepo:      credentialRepo,
+		HealthRepo:          healthRepo,
+		StatsRepo:           statsRepo,
+		SubscriptionManager: subscriptionManager,
+		AuthService:         authService,
+		GroupingService:     groupingService,
+		HealthChecker:       backgroundScheduler.HealthChecker,
+		StatsCollector:      statsCollector,
+		SingBoxStatus: &api.SingBoxStatus{
+			Enabled:                  cfg.SingBox.Enabled,
+			Version:                  singbox.Version,
+			ConfigVersion:            cfg.SingBox.Version,
+			Mode:                     cfg.SingBox.Mode,
+			PreferNativeHTTPSOCKS:    cfg.SingBox.PreferNativeHTTPSOCKS,
+			MaxActiveEngines:         cfg.SingBox.MaxActiveEngines,
+			EngineIdleTimeoutSeconds: cfg.SingBox.EngineIdleTimeoutSeconds,
+			EngineDialTimeoutSeconds: cfg.SingBox.EngineDialTimeoutSeconds,
+			HealthCheckTarget:        cfg.SingBox.HealthCheckTarget,
+			EnableUDP:                cfg.SingBox.EnableUDP,
+			QUICEnabled:              singbox.QUICEnabled(),
+			UTLSEnabled:              singbox.UTLSEnabled(),
+			SupportedProtocols:       singbox.SupportedProtocols(),
+			License:                  "GPL via github.com/sagernet/sing-box",
 		},
+		NodeAdapterInvalidator: singBoxNodeInvalidator,
+	}
+	webHandler, err := webui.NewHandler(apiHandler)
+	if err != nil {
+		logger.Error("initialize embedded web ui failed", "error", err)
+		os.Exit(1)
+	}
+	apiServer := &http.Server{
+		Addr:              cfg.Server.APIAddr,
+		Handler:           webHandler,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	httpProxyHandler := proxyserver.NewHTTPProxy(runtimeCache, outboundDialer)

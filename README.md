@@ -1,8 +1,6 @@
 # JnmProxy
 
-JnmProxy 是一个 Go 后端代理池系统，基于机场订阅链接维护代理节点，提供 HTTP/SOCKS5 入站代理、凭证认证、分组调度、订阅刷新和流量统计。
-
-当前阶段只实现后端，不包含前端。
+JnmProxy 是一个 Go 代理池系统，基于机场订阅链接维护代理节点，提供 HTTP/SOCKS5 入站代理、凭证认证、分组调度、订阅刷新、流量统计和单页管理后台。
 
 ## 功能状态
 
@@ -21,6 +19,7 @@ JnmProxy 是一个 Go 后端代理池系统，基于机场订阅链接维护代�
 - 流量统计先写内存，再定时批量写入 SQLite。
 - 定时刷新订阅和节点健康检查已接入，健康检查可覆盖 sing-box 节点。
 - 提供 `/api/v1` 后端管理 API。
+- Go 后端会托管内嵌的前端管理后台，访问 `http://127.0.0.1:8080/` 即可打开页面。
 
 ## 本地启动
 
@@ -41,7 +40,7 @@ go run -tags "with_quic with_utls" ./cmd/jnmproxy
 
 默认监听：
 
-- API：`127.0.0.1:8080`
+- 管理后台/API：`127.0.0.1:8080`
 - HTTP 代理：`127.0.0.1:1081`
 - SOCKS5 代理：`127.0.0.1:1080`
 - SQLite：`./data/jnmproxy.db`
@@ -68,6 +67,8 @@ npm run dev
 cd web
 npm run build
 ```
+
+当前 Go 程序内嵌托管的静态文件位于 `internal/webui/dist`。更新前端生产包后，需要把 `web/dist` 同步到 `internal/webui/dist`，再重新构建 Go 程序。
 
 ## API 示例
 
