@@ -29,6 +29,11 @@ type CreateForm = ScopeForm & {
   password: string;
 };
 
+type CommandSet = {
+  socks5h: string;
+  http: string;
+};
+
 const defaultCreateForm: CreateForm = {
   username: '',
   password: '',
@@ -58,7 +63,7 @@ export function CredentialsPage() {
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
   const [newPassword, setNewPassword] = useState('');
   const [editForm, setEditForm] = useState<ScopeForm>(defaultEditForm);
-  const [createdCommand, setCreatedCommand] = useState('');
+  const [createdCommands, setCreatedCommands] = useState<CommandSet | null>(null);
   const [commandCredential, setCommandCredential] = useState<Credential | null>(null);
 
   const credentialsQuery = useQuery({ queryKey: ['credentials'], queryFn: listCredentials });
@@ -76,7 +81,7 @@ export function CredentialsPage() {
   const invalidateCredentials = () => { void queryClient.invalidateQueries({ queryKey: ['credentials'] }); };
   const createMutation = useMutation({
     mutationFn: (input: CredentialInput) => createCredential(input),
-    onSuccess: (_credential, input) => { setCreatedCommand(proxyCommand(input.username, input.password)); setOpen(false); setForm(defaultCreateForm); invalidateCredentials(); },
+    onSuccess: (_credential, input) => { setCreatedCommands(proxyCommands(input.username, input.password)); setOpen(false); setForm(defaultCreateForm); invalidateCredentials(); },
   });
   const updateMutation = useMutation({ mutationFn: ({ id, enabled }: { id: number; enabled: boolean }) => updateCredential(id, { enabled }), onSuccess: invalidateCredentials });
   const editMutation = useMutation({
@@ -85,7 +90,13 @@ export function CredentialsPage() {
   });
   const resetMutation = useMutation({
     mutationFn: ({ id, password }: { id: number; password: string }) => resetCredentialPassword(id, password),
-    onSuccess: () => { setResetID(0); setNewPassword(''); invalidateCredentials(); },
+    onSuccess: (_result, variables) => {
+      const credential = (credentialsQuery.data ?? []).find((item) => item.id === variables.id);
+      if (credential) setCreatedCommands(proxyCommands(credential.username, variables.password));
+      setResetID(0);
+      setNewPassword('');
+      invalidateCredentials();
+    },
   });
   const deleteMutation = useMutation({ mutationFn: deleteCredential, onSuccess: invalidateCredentials });
 
@@ -201,16 +212,16 @@ export function CredentialsPage() {
         <Field label="新密码"><Input type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} /></Field>
       </Modal>
       <CommandModal
-        open={Boolean(createdCommand)}
+        open={Boolean(createdCommands)}
         title="凭证创建成功"
-        command={createdCommand}
+        commands={createdCommands ?? emptyCommandSet()}
         description="这是唯一一次能直接展示明文密码的测试命令，关闭后前端不会保存密码。"
-        onClose={() => setCreatedCommand('')}
+        onClose={() => setCreatedCommands(null)}
       />
       <CommandModal
         open={Boolean(commandCredential)}
         title="测试命令"
-        command={commandCredential ? proxyCommand(commandCredential.username, '<填写密码>') : ''}
+        commands={commandCredential ? proxyCommands(commandCredential.username, '<填写密码>') : emptyCommandSet()}
         description="已有凭证不会返回旧密码明文，请把命令里的 <填写密码> 替换成你自己保存的密码。"
         onClose={() => setCommandCredential(null)}
       />
@@ -251,17 +262,27 @@ function CredentialBindingSummary({ credential, groupNames, nodeNames }: { crede
   );
 }
 
-function CommandModal({ open, title, command, description, onClose }: { open: boolean; title: string; command: string; description: string; onClose: () => void }) {
+function CommandModal({ open, title, commands, description, onClose }: { open: boolean; title: string; commands: CommandSet; description: string; onClose: () => void }) {
   return (
-    <Modal open={open} title={title} onClose={onClose} footer={<><Button variant="ghost" onClick={onClose}>关闭</Button><Button variant="primary" disabled={!command} onClick={() => copyCommand(command)}><Copy className="h-4 w-4" />复制命令</Button></>}>
+    <Modal open={open} title={title} onClose={onClose} footer={<><Button variant="ghost" onClick={onClose}>关闭</Button><Button variant="primary" disabled={!commands.socks5h && !commands.http} onClick={() => copyCommand(commandText(commands))}><Copy className="h-4 w-4" />复制全部</Button></>}>
       <div className="space-y-4">
         <p className="text-sm leading-6 text-slate-400">{description}</p>
-        <div className="rounded-2xl border border-slate-800 bg-slate-950 p-4">
-          <div className="mb-3 flex items-center gap-2 text-sm text-slate-300"><Terminal className="h-4 w-4 text-blue-300" />SOCKS5 测试</div>
-          <code className="block overflow-x-auto whitespace-nowrap rounded-xl bg-slate-900 px-3 py-3 font-mono text-xs text-blue-100">{command || '—'}</code>
-        </div>
+        <CommandBlock title="SOCKS5H 测试" command={commands.socks5h} />
+        <CommandBlock title="HTTP 测试" command={commands.http} />
       </div>
     </Modal>
+  );
+}
+
+function CommandBlock({ title, command }: { title: string; command: string }) {
+  return (
+    <div className="rounded-2xl border border-slate-800 bg-slate-950 p-4">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-sm text-slate-300"><Terminal className="h-4 w-4 text-blue-300" />{title}</div>
+        <Button disabled={!command} onClick={() => copyCommand(command)}><Copy className="h-4 w-4" />复制</Button>
+      </div>
+      <code className="block overflow-x-auto whitespace-nowrap rounded-xl bg-slate-900 px-3 py-3 font-mono text-xs text-blue-100">{command || '—'}</code>
+    </div>
   );
 }
 
@@ -376,10 +397,21 @@ function uniqueBindings(bindings: CredentialBinding[]) {
   });
 }
 
-function proxyCommand(username: string, password: string) {
+function proxyCommands(username: string, password: string): CommandSet {
   const safeUsername = encodeURIComponent(username);
   const safePassword = password.startsWith('<') ? password : encodeURIComponent(password);
-  return `curl --proxy socks5h://${safeUsername}:${safePassword}@127.0.0.1:1080 https://httpbin.org/ip`;
+  return {
+    socks5h: `curl --proxy socks5h://${safeUsername}:${safePassword}@127.0.0.1:1080 https://httpbin.org/ip`,
+    http: `curl -x http://${safeUsername}:${safePassword}@127.0.0.1:1081 https://httpbin.org/ip`,
+  };
+}
+
+function emptyCommandSet(): CommandSet {
+  return { socks5h: '', http: '' };
+}
+
+function commandText(commands: CommandSet) {
+  return [commands.socks5h, commands.http].filter(Boolean).join('\n');
 }
 
 function copyCommand(command: string) {
