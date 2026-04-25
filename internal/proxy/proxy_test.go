@@ -3,6 +3,7 @@ package proxy
 import (
 	"bufio"
 	"context"
+	"database/sql"
 	"encoding/base64"
 	"encoding/binary"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -79,6 +81,165 @@ func TestHTTPProxyGETThroughHTTPOutbound(t *testing.T) {
 		if counter.Connections != 1 || counter.SuccessConnections != 1 || counter.DownloadBytes != int64(len(body)) {
 			t.Fatalf("unexpected stats counter: %#v", counter)
 		}
+	}
+}
+
+func TestHTTPProxyConcurrentRequests(t *testing.T) {
+	ctx := context.Background()
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer target.Close()
+
+	upstream := newHTTPConnectProxy(t)
+	defer upstream.Close()
+
+	runtimeCache := testRuntimeCache(t, ctx, upstream.URL)
+	statsCollector := stats.NewCollector(func() time.Time {
+		return time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
+	})
+	handler := NewHTTPProxy(runtimeCache, outbound.NewDialer(2*time.Second))
+	handler.Stats = statsCollector
+	proxyServer := httptest.NewServer(handler)
+	defer proxyServer.Close()
+
+	proxyURL, err := url.Parse(proxyServer.URL)
+	if err != nil {
+		t.Fatalf("parse proxy url: %v", err)
+	}
+	client := &http.Client{
+		Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL)},
+		Timeout:   5 * time.Second,
+	}
+
+	const requestCount = 12
+	var wg sync.WaitGroup
+	errCh := make(chan error, requestCount)
+	for i := 0; i < requestCount; i++ {
+		wg.Add(1)
+		go func(index int) {
+			defer wg.Done()
+			req, err := http.NewRequest(http.MethodGet, target.URL+"/concurrent/"+strconv.Itoa(index), nil)
+			if err != nil {
+				errCh <- err
+				return
+			}
+			req.Header.Set("Proxy-Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("user:pass")))
+			resp, err := client.Do(req)
+			if err != nil {
+				errCh <- err
+				return
+			}
+			defer resp.Body.Close()
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				errCh <- err
+				return
+			}
+			if resp.StatusCode != http.StatusOK || string(body) != "ok" {
+				errCh <- fmt.Errorf("unexpected response status=%d body=%q", resp.StatusCode, string(body))
+			}
+		}(i)
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	hourly, _ := statsCollector.Snapshot()
+	var connections int64
+	for _, counter := range hourly {
+		connections += counter.Connections
+	}
+	if connections != requestCount {
+		t.Fatalf("expected %d connections, got %d", requestCount, connections)
+	}
+}
+
+func TestHTTPProxyRequestSurvivesCacheReload(t *testing.T) {
+	ctx := context.Background()
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		once.Do(func() { close(entered) })
+		<-release
+		_, _ = w.Write([]byte("reload-ok"))
+	}))
+	defer target.Close()
+
+	upstream := newHTTPConnectProxy(t)
+	defer upstream.Close()
+
+	runtimeCache, storeDB := testRuntimeCacheWithDB(t, ctx, upstream.URL)
+	handler := NewHTTPProxy(runtimeCache, outbound.NewDialer(2*time.Second))
+	proxyServer := httptest.NewServer(handler)
+	defer proxyServer.Close()
+
+	proxyURL, err := url.Parse(proxyServer.URL)
+	if err != nil {
+		t.Fatalf("parse proxy url: %v", err)
+	}
+	client := &http.Client{
+		Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL)},
+		Timeout:   5 * time.Second,
+	}
+	req, err := http.NewRequest(http.MethodGet, target.URL+"/during-reload", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Proxy-Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("user:pass")))
+
+	type responseResult struct {
+		body string
+		err  error
+	}
+	resultCh := make(chan responseResult, 1)
+	go func() {
+		resp, err := client.Do(req)
+		if err != nil {
+			resultCh <- responseResult{err: err}
+			return
+		}
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			resultCh <- responseResult{err: err}
+			return
+		}
+		if resp.StatusCode != http.StatusOK {
+			resultCh <- responseResult{err: fmt.Errorf("unexpected status %d", resp.StatusCode)}
+			return
+		}
+		resultCh <- responseResult{body: string(body)}
+	}()
+
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("request did not reach target before cache reload")
+	}
+	if _, err := storeDB.ExecContext(ctx, "UPDATE proxy_nodes SET alive_status = 'dead'"); err != nil {
+		t.Fatalf("mark node dead: %v", err)
+	}
+	if err := runtimeCache.Load(ctx, storeDB); err != nil {
+		t.Fatalf("reload cache: %v", err)
+	}
+	close(release)
+
+	select {
+	case result := <-resultCh:
+		if result.err != nil {
+			t.Fatalf("request failed after cache reload: %v", result.err)
+		}
+		if result.body != "reload-ok" {
+			t.Fatalf("unexpected body after cache reload: %q", result.body)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("request did not finish after cache reload")
 	}
 }
 
@@ -167,6 +328,12 @@ func newHTTPConnectProxy(t *testing.T) *httptest.Server {
 
 func testRuntimeCache(t *testing.T, ctx context.Context, upstreamURL string) *cache.Store {
 	t.Helper()
+	runtimeCache, _ := testRuntimeCacheWithDB(t, ctx, upstreamURL)
+	return runtimeCache
+}
+
+func testRuntimeCacheWithDB(t *testing.T, ctx context.Context, upstreamURL string) (*cache.Store, *sql.DB) {
+	t.Helper()
 
 	storeDB, err := db.Open(ctx, filepath.Join(t.TempDir(), "jnmproxy.db"))
 	if err != nil {
@@ -225,7 +392,7 @@ func testRuntimeCache(t *testing.T, ctx context.Context, upstreamURL string) *ca
 	if err := runtimeCache.Load(ctx, storeDB); err != nil {
 		t.Fatalf("load cache: %v", err)
 	}
-	return runtimeCache
+	return runtimeCache, storeDB
 }
 
 func socks5Connect(conn net.Conn, username string, password string, target string) error {
