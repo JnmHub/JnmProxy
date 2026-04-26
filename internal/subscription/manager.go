@@ -158,8 +158,11 @@ func (manager *Manager) Refresh(ctx context.Context, subscriptionID int64) (*Ref
 		return nil, err
 	}
 	existingByKey := make(map[string]model.ProxyNode, len(existingNodes))
+	existingByStableKey := make(map[string][]model.ProxyNode, len(existingNodes))
 	for _, node := range existingNodes {
 		existingByKey[node.SubscriptionNodeKey] = node
+		stableKey := StableNodeKeyFromStored(node.SubscriptionID, node.Protocol, node.Server, node.Port, node.RawConfigJSON)
+		existingByStableKey[stableKey] = append(existingByStableKey[stableKey], node)
 	}
 
 	upsertNodes := make([]repository.UpsertProxyNodeParams, 0, len(parsedNodes))
@@ -173,6 +176,14 @@ func (manager *Manager) Refresh(ctx context.Context, subscriptionID int64) (*Ref
 			return nil, err
 		}
 		key := StableNodeKey(subscriptionID, parsedNode, rawConfigJSON)
+		if _, ok := existingByKey[key]; !ok {
+			if existingNode, ok := chooseExistingStableNode(existingByStableKey[key]); ok {
+				key = existingNode.SubscriptionNodeKey
+			}
+		}
+		if _, seen := seenKeySet[key]; seen {
+			continue
+		}
 		seenKeys = append(seenKeys, key)
 		seenKeySet[key] = struct{}{}
 
@@ -230,7 +241,7 @@ func (manager *Manager) Refresh(ctx context.Context, subscriptionID int64) (*Ref
 	if err := manager.repo.RecordRefreshResult(ctx, subscriptionID, repository.SubscriptionRefreshResult{
 		Status:                "success",
 		HTTPStatus:            &httpStatus,
-		NodeCount:             len(parsedNodes),
+		NodeCount:             len(upsertNodes),
 		SingBoxSupportedCount: singBoxSupportedCount,
 		SingBoxErrorCount:     singBoxErrorCount,
 		UnsupportedCount:      unsupportedCount,
@@ -248,7 +259,7 @@ func (manager *Manager) Refresh(ctx context.Context, subscriptionID int64) (*Ref
 
 	return &RefreshResult{
 		SubscriptionID:        subscriptionID,
-		NodeCount:             len(parsedNodes),
+		NodeCount:             len(upsertNodes),
 		HTTPStatus:            fetchResult.StatusCode,
 		SingBoxSupportedCount: singBoxSupportedCount,
 		SingBoxErrorCount:     singBoxErrorCount,
@@ -269,9 +280,87 @@ func (manager *Manager) fetchParsedNodes(ctx context.Context, rawURL string, use
 }
 
 func StableNodeKey(subscriptionID int64, node ParsedNode, rawConfigJSON string) string {
-	identity := fmt.Sprintf("%d|%s|%s|%d|%s|%s", subscriptionID, strings.ToLower(node.Protocol), node.Server, node.Port, node.Name, rawConfigJSON)
+	identity := fmt.Sprintf("%d|%s|%s|%d|%s", subscriptionID, strings.ToLower(node.Protocol), strings.ToLower(node.Server), node.Port, stableRawConfigForKey(node.RawConfig, rawConfigJSON))
 	sum := sha256.Sum256([]byte(identity))
 	return hex.EncodeToString(sum[:])
+}
+
+func StableNodeKeyFromStored(subscriptionID int64, protocol string, server string, port int, rawConfigJSON string) string {
+	var rawConfig map[string]any
+	if rawConfigJSON != "" {
+		_ = json.Unmarshal([]byte(rawConfigJSON), &rawConfig)
+	}
+	return StableNodeKey(subscriptionID, ParsedNode{
+		Protocol:  protocol,
+		Server:    server,
+		Port:      port,
+		RawConfig: rawConfig,
+	}, rawConfigJSON)
+}
+
+func chooseExistingStableNode(nodes []model.ProxyNode) (model.ProxyNode, bool) {
+	if len(nodes) == 0 {
+		return model.ProxyNode{}, false
+	}
+	for _, node := range nodes {
+		if node.Enabled {
+			return node, true
+		}
+	}
+	return nodes[0], true
+}
+
+func stableRawConfigForKey(rawConfig map[string]any, fallback string) string {
+	if len(rawConfig) == 0 {
+		return fallback
+	}
+	stable := stableConfigValue(rawConfig)
+	content, err := json.Marshal(stable)
+	if err != nil {
+		return fallback
+	}
+	return string(content)
+}
+
+func stableConfigValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		filtered := make(map[string]any, len(typed))
+		for key, item := range typed {
+			if ignoredStableKey(key) {
+				continue
+			}
+			filtered[key] = stableConfigValue(item)
+		}
+		return filtered
+	case map[any]any:
+		filtered := make(map[string]any, len(typed))
+		for key, item := range typed {
+			keyText := fmt.Sprint(key)
+			if ignoredStableKey(keyText) {
+				continue
+			}
+			filtered[keyText] = stableConfigValue(item)
+		}
+		return filtered
+	case []any:
+		items := make([]any, 0, len(typed))
+		for _, item := range typed {
+			items = append(items, stableConfigValue(item))
+		}
+		return items
+	default:
+		return typed
+	}
+}
+
+func ignoredStableKey(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(key)) {
+	case "name", "ps", "remarks", "remark", "label", "uri":
+		return true
+	default:
+		return false
+	}
 }
 
 func (manager *Manager) adapterStatus(protocol string, singBoxStatus string) string {

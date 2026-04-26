@@ -244,7 +244,8 @@ func (server *Server) handleSubscriptions(w http.ResponseWriter, r *http.Request
 				writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 				return
 			}
-			nodes, err := server.SubscriptionRepo.ListNodesBySubscription(ctx, id)
+			enabled := true
+			nodes, err := server.NodeRepo.List(ctx, repository.NodeListFilter{SubscriptionID: id, Enabled: &enabled})
 			writeResult(w, nodes, err)
 		default:
 			writeError(w, http.StatusNotFound, "not found")

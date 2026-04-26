@@ -99,10 +99,10 @@ func (repo *SubscriptionRepository) Get(ctx context.Context, id int64) (*model.S
 SELECT s.id, s.name, s.url, s.user_agent, s.refresh_interval_seconds, s.enabled, s.last_refresh_at,
        s.next_refresh_at, s.last_status, s.last_error, s.upload_bytes, s.download_bytes,
        s.total_bytes, s.expire_at, s.created_at, s.updated_at,
-       (SELECT COUNT(*) FROM proxy_nodes pn WHERE pn.subscription_id = s.id) AS node_count,
-       (SELECT COUNT(*) FROM proxy_nodes pn WHERE pn.subscription_id = s.id AND pn.sing_box_status = 'supported') AS sing_box_supported_count,
-       (SELECT COUNT(*) FROM proxy_nodes pn WHERE pn.subscription_id = s.id AND pn.sing_box_status = 'error') AS sing_box_error_count,
-       (SELECT COUNT(*) FROM proxy_nodes pn WHERE pn.subscription_id = s.id AND pn.sing_box_status = 'unsupported') AS unsupported_count
+       (SELECT COUNT(*) FROM proxy_nodes pn WHERE pn.subscription_id = s.id AND pn.enabled = 1) AS node_count,
+       (SELECT COUNT(*) FROM proxy_nodes pn WHERE pn.subscription_id = s.id AND pn.enabled = 1 AND pn.sing_box_status = 'supported') AS sing_box_supported_count,
+       (SELECT COUNT(*) FROM proxy_nodes pn WHERE pn.subscription_id = s.id AND pn.enabled = 1 AND pn.sing_box_status = 'error') AS sing_box_error_count,
+       (SELECT COUNT(*) FROM proxy_nodes pn WHERE pn.subscription_id = s.id AND pn.enabled = 1 AND pn.sing_box_status = 'unsupported') AS unsupported_count
 FROM subscriptions s
 WHERE s.id = ?
 `, id)
@@ -114,10 +114,10 @@ func (repo *SubscriptionRepository) List(ctx context.Context) ([]model.Subscript
 SELECT s.id, s.name, s.url, s.user_agent, s.refresh_interval_seconds, s.enabled, s.last_refresh_at,
        s.next_refresh_at, s.last_status, s.last_error, s.upload_bytes, s.download_bytes,
        s.total_bytes, s.expire_at, s.created_at, s.updated_at,
-       (SELECT COUNT(*) FROM proxy_nodes pn WHERE pn.subscription_id = s.id) AS node_count,
-       (SELECT COUNT(*) FROM proxy_nodes pn WHERE pn.subscription_id = s.id AND pn.sing_box_status = 'supported') AS sing_box_supported_count,
-       (SELECT COUNT(*) FROM proxy_nodes pn WHERE pn.subscription_id = s.id AND pn.sing_box_status = 'error') AS sing_box_error_count,
-       (SELECT COUNT(*) FROM proxy_nodes pn WHERE pn.subscription_id = s.id AND pn.sing_box_status = 'unsupported') AS unsupported_count
+       (SELECT COUNT(*) FROM proxy_nodes pn WHERE pn.subscription_id = s.id AND pn.enabled = 1) AS node_count,
+       (SELECT COUNT(*) FROM proxy_nodes pn WHERE pn.subscription_id = s.id AND pn.enabled = 1 AND pn.sing_box_status = 'supported') AS sing_box_supported_count,
+       (SELECT COUNT(*) FROM proxy_nodes pn WHERE pn.subscription_id = s.id AND pn.enabled = 1 AND pn.sing_box_status = 'error') AS sing_box_error_count,
+       (SELECT COUNT(*) FROM proxy_nodes pn WHERE pn.subscription_id = s.id AND pn.enabled = 1 AND pn.sing_box_status = 'unsupported') AS unsupported_count
 FROM subscriptions s
 ORDER BY s.id DESC
 `)
@@ -145,10 +145,10 @@ func (repo *SubscriptionRepository) ListDue(ctx context.Context, now string) ([]
 SELECT s.id, s.name, s.url, s.user_agent, s.refresh_interval_seconds, s.enabled, s.last_refresh_at,
        s.next_refresh_at, s.last_status, s.last_error, s.upload_bytes, s.download_bytes,
        s.total_bytes, s.expire_at, s.created_at, s.updated_at,
-       (SELECT COUNT(*) FROM proxy_nodes pn WHERE pn.subscription_id = s.id) AS node_count,
-       (SELECT COUNT(*) FROM proxy_nodes pn WHERE pn.subscription_id = s.id AND pn.sing_box_status = 'supported') AS sing_box_supported_count,
-       (SELECT COUNT(*) FROM proxy_nodes pn WHERE pn.subscription_id = s.id AND pn.sing_box_status = 'error') AS sing_box_error_count,
-       (SELECT COUNT(*) FROM proxy_nodes pn WHERE pn.subscription_id = s.id AND pn.sing_box_status = 'unsupported') AS unsupported_count
+       (SELECT COUNT(*) FROM proxy_nodes pn WHERE pn.subscription_id = s.id AND pn.enabled = 1) AS node_count,
+       (SELECT COUNT(*) FROM proxy_nodes pn WHERE pn.subscription_id = s.id AND pn.enabled = 1 AND pn.sing_box_status = 'supported') AS sing_box_supported_count,
+       (SELECT COUNT(*) FROM proxy_nodes pn WHERE pn.subscription_id = s.id AND pn.enabled = 1 AND pn.sing_box_status = 'error') AS sing_box_error_count,
+       (SELECT COUNT(*) FROM proxy_nodes pn WHERE pn.subscription_id = s.id AND pn.enabled = 1 AND pn.sing_box_status = 'unsupported') AS unsupported_count
 FROM subscriptions s
 WHERE s.enabled = 1 AND (s.next_refresh_at IS NULL OR s.next_refresh_at = '' OR s.next_refresh_at <= ?)
 ORDER BY s.id ASC
