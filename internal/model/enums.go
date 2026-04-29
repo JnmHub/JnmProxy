@@ -37,6 +37,7 @@ type SelectionPolicy string
 const (
 	SelectionPolicyRandom SelectionPolicy = "random"
 	SelectionPolicyFixed  SelectionPolicy = "fixed"
+	SelectionPolicySticky SelectionPolicy = "sticky"
 )
 
 type SingBoxStatus string

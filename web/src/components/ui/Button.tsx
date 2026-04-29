@@ -3,7 +3,7 @@ import { cx } from '../../utils/status';
 
 type ButtonVariant = 'primary' | 'secondary' | 'danger' | 'ghost' | 'success';
 
-export function Button({ children, className, variant = 'secondary', ...props }: PropsWithChildren<ButtonHTMLAttributes<HTMLButtonElement> & { variant?: ButtonVariant }>) {
+export function Button({ children, className, type = 'button', variant = 'secondary', ...props }: PropsWithChildren<ButtonHTMLAttributes<HTMLButtonElement> & { variant?: ButtonVariant }>) {
   const variants: Record<ButtonVariant, string> = {
     primary: 'border-blue-400/30 bg-blue-500/15 text-blue-100 hover:bg-blue-500/25',
     secondary: 'border-slate-700 bg-slate-900 text-slate-100 hover:bg-slate-800',
@@ -13,6 +13,7 @@ export function Button({ children, className, variant = 'secondary', ...props }:
   };
   return (
     <button
+      type={type}
       {...props}
       className={cx(
         'inline-flex items-center justify-center gap-2 rounded-xl border px-3.5 py-2 text-sm font-medium transition-colors duration-200 disabled:cursor-not-allowed disabled:opacity-50',

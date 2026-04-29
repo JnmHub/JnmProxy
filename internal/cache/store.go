@@ -80,6 +80,7 @@ type Store struct {
 	allNodeIDs            []int64
 	random                *rand.Rand
 	selectionBags         map[int64]*selectionBag
+	stickyNodeIDs         map[int64]int64
 	nodeFailures          map[int64]nodeFailureState
 	failureThreshold      int
 	circuitBreakDuration  time.Duration
@@ -106,6 +107,7 @@ func NewStore() *Store {
 		groupNodeIDs:          make(map[int64][]int64),
 		random:                rand.New(rand.NewSource(time.Now().UnixNano())),
 		selectionBags:         make(map[int64]*selectionBag),
+		stickyNodeIDs:         make(map[int64]int64),
 		nodeFailures:          make(map[int64]nodeFailureState),
 		failureThreshold:      3,
 		circuitBreakDuration:  time.Minute,
@@ -124,10 +126,14 @@ func (store *Store) Load(ctx context.Context, db *sql.DB) error {
 	store.nodesByID = loaded.nodesByID
 	store.groupNodeIDs = loaded.groupNodeIDs
 	store.allNodeIDs = loaded.allNodeIDs
+	store.stickyNodeIDs = loaded.stickyNodeIDs
 	if store.random == nil {
 		store.random = rand.New(rand.NewSource(time.Now().UnixNano()))
 	}
 	store.selectionBags = make(map[int64]*selectionBag)
+	if store.stickyNodeIDs == nil {
+		store.stickyNodeIDs = make(map[int64]int64)
+	}
 	if store.nodeFailures == nil {
 		store.nodeFailures = make(map[int64]nodeFailureState)
 	}
@@ -216,7 +222,9 @@ func (store *Store) SelectExcluding(username string, excludedNodeIDs map[int64]s
 	}
 
 	selectedID := candidateIDs[0]
-	if credential.SelectionPolicy == model.SelectionPolicyRandom && len(candidateIDs) > 1 {
+	if credential.SelectionPolicy == model.SelectionPolicySticky {
+		selectedID = store.selectStickyNodeLocked(credential, candidateIDs)
+	} else if credential.SelectionPolicy == model.SelectionPolicyRandom && len(candidateIDs) > 1 {
 		selectedID = store.selectRandomNodeLocked(credential, candidateIDs)
 	}
 	node, ok := store.nodesByID[selectedID]
@@ -228,6 +236,45 @@ func (store *Store) SelectExcluding(username string, excludedNodeIDs map[int64]s
 		Node:       node,
 		GroupID:    store.selectedGroupIDLocked(credential, selectedID),
 	}, nil
+}
+
+func (store *Store) SwitchStickyNode(username string) (Selection, bool, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+
+	credential, ok := store.credentialsByUsername[username]
+	if !ok || !credential.Enabled {
+		return Selection{}, false, ErrCredentialNotFound
+	}
+	if credential.SelectionPolicy != model.SelectionPolicySticky {
+		return Selection{}, false, errors.New("credential is not sticky")
+	}
+
+	candidateIDs := store.candidateIDsLocked(credential)
+	if len(candidateIDs) == 0 {
+		return Selection{}, false, ErrNoCandidateNodes
+	}
+
+	currentID := store.stickyNodeIDs[credential.ID]
+	selectedID := candidateIDs[0]
+	if len(candidateIDs) > 1 {
+		nextCandidates := make([]int64, 0, len(candidateIDs)-1)
+		for _, candidateID := range candidateIDs {
+			if candidateID != currentID {
+				nextCandidates = append(nextCandidates, candidateID)
+			}
+		}
+		if len(nextCandidates) > 0 {
+			selectedID = nextCandidates[store.random.Intn(len(nextCandidates))]
+		}
+	}
+	store.stickyNodeIDs[credential.ID] = selectedID
+	node := store.nodesByID[selectedID]
+	return Selection{
+		Credential: credential,
+		Node:       node,
+		GroupID:    store.selectedGroupIDLocked(credential, selectedID),
+	}, currentID != 0 && currentID != selectedID, nil
 }
 
 func (store *Store) ReportNodeFailure(nodeID int64, reasons ...string) {
@@ -268,6 +315,24 @@ func (store *Store) selectRandomNodeLocked(credential CredentialSnapshot, candid
 		bag.reset(candidateIDs, store.random)
 	}
 	return bag.next(store.random)
+}
+
+func (store *Store) selectStickyNodeLocked(credential CredentialSnapshot, candidateIDs []int64) int64 {
+	if store.stickyNodeIDs == nil {
+		store.stickyNodeIDs = make(map[int64]int64)
+	}
+	currentID := store.stickyNodeIDs[credential.ID]
+	for _, candidateID := range candidateIDs {
+		if candidateID == currentID {
+			return currentID
+		}
+	}
+	selectedID := candidateIDs[0]
+	if len(candidateIDs) > 1 {
+		selectedID = store.selectRandomNodeLocked(credential, candidateIDs)
+	}
+	store.stickyNodeIDs[credential.ID] = selectedID
+	return selectedID
 }
 
 func (bag *selectionBag) reset(candidateIDs []int64, random *rand.Rand) {
@@ -420,6 +485,9 @@ func loadSnapshot(ctx context.Context, db *sql.DB) (*Store, error) {
 	if err := loadNodeGroups(ctx, db, store); err != nil {
 		return nil, err
 	}
+	if err := loadStickyStates(ctx, db, store); err != nil {
+		return nil, err
+	}
 	return store, nil
 }
 
@@ -540,6 +608,35 @@ ORDER BY group_id ASC, node_id ASC
 	}
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("iterate node group cache: %w", err)
+	}
+	return nil
+}
+
+func loadStickyStates(ctx context.Context, db *sql.DB, store *Store) error {
+	rows, err := db.QueryContext(ctx, `
+SELECT credential_id, node_id
+FROM credential_sticky_states
+ORDER BY credential_id ASC
+`)
+	if err != nil {
+		return fmt.Errorf("load sticky states cache: %w", err)
+	}
+	defer rows.Close()
+
+	if store.stickyNodeIDs == nil {
+		store.stickyNodeIDs = make(map[int64]int64)
+	}
+	for rows.Next() {
+		var credentialID, nodeID int64
+		if err := rows.Scan(&credentialID, &nodeID); err != nil {
+			return fmt.Errorf("scan sticky state cache: %w", err)
+		}
+		if credentialID > 0 && nodeID > 0 {
+			store.stickyNodeIDs[credentialID] = nodeID
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate sticky states: %w", err)
 	}
 	return nil
 }

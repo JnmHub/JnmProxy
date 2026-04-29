@@ -41,6 +41,12 @@ type CredentialBindingTarget struct {
 	TargetID   int64  `json:"target_id"`
 }
 
+type StickyState struct {
+	CredentialID int64
+	NodeID       int64
+	UpdatedAt    string
+}
+
 func (repo *CredentialRepository) Create(ctx context.Context, params CreateCredentialParams) (*model.Credential, error) {
 	username := strings.TrimSpace(params.Username)
 	if username == "" {
@@ -182,6 +188,50 @@ func (repo *CredentialRepository) Delete(ctx context.Context, id int64) error {
 		return fmt.Errorf("delete credential: %w", err)
 	}
 	return nil
+}
+
+func (repo *CredentialRepository) SetStickyNode(ctx context.Context, credentialID int64, nodeID int64) error {
+	if credentialID <= 0 {
+		return errors.New("credential id must be positive")
+	}
+	if nodeID <= 0 {
+		return errors.New("sticky node id must be positive")
+	}
+	if _, err := repo.db.ExecContext(ctx, `
+INSERT INTO credential_sticky_states (credential_id, node_id, updated_at)
+VALUES (?, ?, datetime('now'))
+ON CONFLICT(credential_id) DO UPDATE SET
+	node_id = excluded.node_id,
+	updated_at = datetime('now')
+`, credentialID, nodeID); err != nil {
+		return fmt.Errorf("set sticky node: %w", err)
+	}
+	return nil
+}
+
+func (repo *CredentialRepository) ListStickyStates(ctx context.Context) ([]StickyState, error) {
+	rows, err := repo.db.QueryContext(ctx, `
+SELECT credential_id, node_id, updated_at
+FROM credential_sticky_states
+ORDER BY credential_id ASC
+`)
+	if err != nil {
+		return nil, fmt.Errorf("list sticky states: %w", err)
+	}
+	defer rows.Close()
+
+	var states []StickyState
+	for rows.Next() {
+		var state StickyState
+		if err := rows.Scan(&state.CredentialID, &state.NodeID, &state.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan sticky state: %w", err)
+		}
+		states = append(states, state)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate sticky states: %w", err)
+	}
+	return states, nil
 }
 
 func (repo *CredentialRepository) ListBindings(ctx context.Context, credentialID int64) ([]model.CredentialBinding, error) {

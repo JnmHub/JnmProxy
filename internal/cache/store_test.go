@@ -296,6 +296,65 @@ func TestFixedNodeSelectionDoesNotUseShuffleBag(t *testing.T) {
 	}
 }
 
+func TestStickySelectionKeepsNodeUntilSwitched(t *testing.T) {
+	store := newShuffleTestStore("sticky-user", []int64{1, 2, 3})
+	store.credentialsByUsername["sticky-user"] = CredentialSnapshot{
+		ID:              1,
+		Username:        "sticky-user",
+		Enabled:         true,
+		BindMode:        model.CredentialBindModeAll,
+		SelectionPolicy: model.SelectionPolicySticky,
+	}
+
+	first, err := store.SelectNode("sticky-user")
+	if err != nil {
+		t.Fatalf("select sticky first node: %v", err)
+	}
+	for range 5 {
+		next, err := store.SelectNode("sticky-user")
+		if err != nil {
+			t.Fatalf("select sticky next node: %v", err)
+		}
+		if next.ID != first.ID {
+			t.Fatalf("sticky selection should keep node %d, got %d", first.ID, next.ID)
+		}
+	}
+
+	selection, switched, err := store.SwitchStickyNode("sticky-user")
+	if err != nil {
+		t.Fatalf("switch sticky node: %v", err)
+	}
+	if !switched || selection.Node.ID == first.ID {
+		t.Fatalf("expected sticky switch to choose another node, first=%d selection=%#v switched=%v", first.ID, selection, switched)
+	}
+	afterSwitch, err := store.SelectNode("sticky-user")
+	if err != nil {
+		t.Fatalf("select sticky after switch: %v", err)
+	}
+	if afterSwitch.ID != selection.Node.ID {
+		t.Fatalf("sticky selection should keep switched node %d, got %d", selection.Node.ID, afterSwitch.ID)
+	}
+}
+
+func TestStickySwitchSingleNodeDoesNotError(t *testing.T) {
+	store := newShuffleTestStore("sticky-user", []int64{7})
+	store.credentialsByUsername["sticky-user"] = CredentialSnapshot{
+		ID:              1,
+		Username:        "sticky-user",
+		Enabled:         true,
+		BindMode:        model.CredentialBindModeAll,
+		SelectionPolicy: model.SelectionPolicySticky,
+	}
+
+	selection, switched, err := store.SwitchStickyNode("sticky-user")
+	if err != nil {
+		t.Fatalf("single-node sticky switch should not error: %v", err)
+	}
+	if switched || selection.Node.ID != 7 {
+		t.Fatalf("single-node sticky switch should keep node 7 without switched flag, got selection=%#v switched=%v", selection, switched)
+	}
+}
+
 func TestStoreLoadClearsShuffleBags(t *testing.T) {
 	ctx := context.Background()
 	storeDB, err := db.Open(ctx, filepath.Join(t.TempDir(), "jnmproxy.db"))

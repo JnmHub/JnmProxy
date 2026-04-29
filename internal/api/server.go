@@ -71,12 +71,16 @@ type SingBoxStatus struct {
 }
 
 func (server *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if !server.authorizeAdmin(w, r) {
-		return
-	}
 	segments := pathSegments(r.URL.Path)
 	if len(segments) == 0 {
 		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	if isCredentialStickySwitch(segments) {
+		server.handleCredentialStickySwitch(w, r)
+		return
+	}
+	if !server.authorizeAdmin(w, r) {
 		return
 	}
 	switch segments[0] {
@@ -105,6 +109,10 @@ func (server *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeError(w, http.StatusNotFound, "not found")
 	}
+}
+
+func isCredentialStickySwitch(segments []string) bool {
+	return len(segments) == 3 && segments[0] == "credentials" && segments[1] == "sticky" && segments[2] == "switch"
 }
 
 func (server *Server) authorizeAdmin(w http.ResponseWriter, r *http.Request) bool {
@@ -608,6 +616,50 @@ func (server *Server) handleCredentials(w http.ResponseWriter, r *http.Request, 
 	}
 }
 
+func (server *Server) handleCredentialStickySwitch(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	input, ok := stickySwitchInputFromRequest(w, r)
+	if !ok {
+		return
+	}
+	if server.AuthService == nil {
+		writeError(w, http.StatusBadRequest, "credential authentication is not available")
+		return
+	}
+	credential, err := server.AuthService.Authenticate(ctx, input.Username, input.Password)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "invalid credential")
+		return
+	}
+	if credential.SelectionPolicy != model.SelectionPolicySticky {
+		writeError(w, http.StatusBadRequest, "credential is not sticky")
+		return
+	}
+	if server.Cache == nil || server.CredentialRepo == nil {
+		writeError(w, http.StatusBadRequest, "sticky switch is not available")
+		return
+	}
+	selection, switched, err := server.Cache.SwitchStickyNode(input.Username)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := server.CredentialRepo.SetStickyNode(ctx, credential.ID, selection.Node.ID); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"username":  credential.Username,
+		"switched":  switched,
+		"node_id":   selection.Node.ID,
+		"node_name": selection.Node.Name,
+	})
+}
+
 func (server *Server) handleStats(w http.ResponseWriter, r *http.Request, segments []string) {
 	if len(segments) == 2 && segments[1] == "overview" && r.Method == http.MethodGet {
 		if server.StatsCollector != nil {
@@ -990,6 +1042,11 @@ type credentialUpdateInput struct {
 	Bindings        *[]repository.CredentialBindingTarget `json:"bindings"`
 }
 
+type stickySwitchInput struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
 type resetPasswordInput struct {
 	Password string `json:"password"`
 }
@@ -1045,6 +1102,49 @@ func nodeListFilterFromRequest(r *http.Request) repository.NodeListFilter {
 		filter.Enabled = &enabled
 	}
 	return filter
+}
+
+func stickySwitchInputFromRequest(w http.ResponseWriter, r *http.Request) (stickySwitchInput, bool) {
+	if r.Method == http.MethodGet {
+		return validateStickySwitchInput(w, stickySwitchInput{
+			Username: strings.TrimSpace(r.URL.Query().Get("username")),
+			Password: r.URL.Query().Get("password"),
+		})
+	}
+	queryInput := stickySwitchInput{
+		Username: strings.TrimSpace(r.URL.Query().Get("username")),
+		Password: r.URL.Query().Get("password"),
+	}
+	if queryInput.Username != "" && queryInput.Password != "" {
+		return queryInput, true
+	}
+
+	var input stickySwitchInput
+	contentType := strings.ToLower(r.Header.Get("Content-Type"))
+	if strings.HasPrefix(contentType, "application/x-www-form-urlencoded") || strings.HasPrefix(contentType, "multipart/form-data") {
+		if err := r.ParseForm(); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid form body")
+			return stickySwitchInput{}, false
+		}
+		input = stickySwitchInput{
+			Username: strings.TrimSpace(r.FormValue("username")),
+			Password: r.FormValue("password"),
+		}
+	} else {
+		if !decodeRequest(w, r, &input) {
+			return stickySwitchInput{}, false
+		}
+		input.Username = strings.TrimSpace(input.Username)
+	}
+	return validateStickySwitchInput(w, input)
+}
+
+func validateStickySwitchInput(w http.ResponseWriter, input stickySwitchInput) (stickySwitchInput, bool) {
+	if strings.TrimSpace(input.Username) == "" || input.Password == "" {
+		writeError(w, http.StatusBadRequest, "username and password are required")
+		return stickySwitchInput{}, false
+	}
+	return input, true
 }
 
 func decodeRequest(w http.ResponseWriter, r *http.Request, dst any) bool {

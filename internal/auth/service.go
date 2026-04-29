@@ -141,13 +141,13 @@ func normalizeCredentialScope(bindMode string, selectionPolicy string, bindings 
 
 	switch model.CredentialBindMode(bindMode) {
 	case model.CredentialBindModeAll:
-		return bindMode, string(model.SelectionPolicyRandom), nil, nil
+		return bindMode, normalizeRangeSelectionPolicy(selectionPolicy), nil, nil
 	case model.CredentialBindModeGroup:
 		groupBindings := filterCredentialBindings(bindings, "group")
 		if len(groupBindings) == 0 {
 			return "", "", nil, errors.New("group binding requires at least one group")
 		}
-		return bindMode, string(model.SelectionPolicyRandom), groupBindings, nil
+		return bindMode, normalizeRangeSelectionPolicy(selectionPolicy), groupBindings, nil
 	case model.CredentialBindModeNode:
 		nodeBindings := filterCredentialBindings(bindings, "node")
 		if len(nodeBindings) != 1 {
@@ -157,6 +157,13 @@ func normalizeCredentialScope(bindMode string, selectionPolicy string, bindings 
 	default:
 		return "", "", nil, errors.New("invalid credential bind mode")
 	}
+}
+
+func normalizeRangeSelectionPolicy(selectionPolicy string) string {
+	if model.SelectionPolicy(selectionPolicy) == model.SelectionPolicySticky {
+		return string(model.SelectionPolicySticky)
+	}
+	return string(model.SelectionPolicyRandom)
 }
 
 func filterCredentialBindings(bindings []repository.CredentialBindingTarget, targetType string) []repository.CredentialBindingTarget {

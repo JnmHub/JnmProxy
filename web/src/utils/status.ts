@@ -18,6 +18,7 @@ export function statusLabel(value?: string) {
     node: '指定节点',
     random: '随机',
     fixed: '固定',
+    sticky: '粘性 IP',
   };
   return value ? labels[value] ?? value : '—';
 }

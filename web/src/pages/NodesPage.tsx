@@ -1,6 +1,6 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Activity, Eye, Filter, RefreshCw, RotateCcw, Search, ShieldCheck } from 'lucide-react';
-import { useDeferredValue, useEffect, useMemo, useState } from 'react';
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { batchNodes, checkAllNodes, checkNode, listNodePage, listRuntimeNodes, rebuildNodeAdapter, setNodeEnabled, type NodeBatchAction, type NodeFilter } from '../api/nodes';
 import { listGroups } from '../api/groups';
@@ -31,6 +31,7 @@ export function NodesPage() {
   const [selected, setSelected] = useState<number[]>([]);
   const [detail, setDetail] = useState<ProxyNode | null>(null);
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
+  const pendingPaginationScrollY = useRef<number | null>(null);
   const queryClient = useQueryClient();
 
   const pageFilter = useMemo(() => ({
@@ -40,7 +41,7 @@ export function NodesPage() {
     page,
     page_size: pageSize,
   }), [deferredSearch, filter, page, pageSize, region]);
-  const nodesQuery = useQuery({ queryKey: ['nodes', 'page', pageFilter], queryFn: () => listNodePage(pageFilter) });
+  const nodesQuery = useQuery({ queryKey: ['nodes', 'page', pageFilter], queryFn: () => listNodePage(pageFilter), placeholderData: keepPreviousData });
   const runtimeQuery = useQuery({ queryKey: ['runtime', 'nodes'], queryFn: listRuntimeNodes, refetchInterval: 5_000 });
   const subscriptionsQuery = useQuery({ queryKey: ['subscriptions'], queryFn: listSubscriptions });
   const groupsQuery = useQuery({ queryKey: ['groups'], queryFn: listGroups });
@@ -62,7 +63,8 @@ export function NodesPage() {
   const nodePage = nodesQuery.data;
   const nodes = nodePage?.items ?? [];
   const total = nodePage?.total ?? 0;
-  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const currentPageSize = nodePage?.page_size ?? pageSize;
+  const totalPages = Math.max(1, Math.ceil(total / currentPageSize));
   const protocolOptions = commonProtocols;
   const subscriptionNames = useMemo(() => new Map((subscriptionsQuery.data ?? []).map((item) => [item.id, item.name])), [subscriptionsQuery.data]);
   const groupNames = useMemo(() => new Map((groupsQuery.data ?? []).map((group) => [group.id, group.name])), [groupsQuery.data]);
@@ -71,10 +73,20 @@ export function NodesPage() {
   const allSelected = selected.length > 0 && selected.length === nodes.length;
 
   useEffect(() => {
-    if (page > totalPages) {
+    if (nodesQuery.isSuccess && page > totalPages) {
       setPage(totalPages);
     }
-  }, [page, totalPages]);
+  }, [nodesQuery.isSuccess, page, totalPages]);
+
+  useEffect(() => {
+    restorePendingPaginationScroll(false);
+  }, [page]);
+
+  useEffect(() => {
+    if (!nodesQuery.isFetching) {
+      restorePendingPaginationScroll(true);
+    }
+  }, [nodesQuery.isFetching, nodePage?.page]);
 
   useEffect(() => {
     setSearch(searchParam);
@@ -92,6 +104,30 @@ export function NodesPage() {
     setRegion('');
     updateFilter({});
   };
+  function preservePaginationScroll() {
+    if (typeof window === 'undefined') return;
+    pendingPaginationScrollY.current = window.scrollY;
+  }
+  function restorePendingPaginationScroll(clear: boolean) {
+    if (typeof window === 'undefined' || pendingPaginationScrollY.current === null) return;
+    const top = pendingPaginationScrollY.current;
+    if (clear) {
+      pendingPaginationScrollY.current = null;
+    }
+    window.requestAnimationFrame(() => window.scrollTo({ top, left: window.scrollX, behavior: 'auto' }));
+  }
+  function changePage(nextPage: number) {
+    if (nextPage === page) return;
+    preservePaginationScroll();
+    setPage(nextPage);
+    setSelected([]);
+  }
+  function changePageSize(nextPageSize: number) {
+    preservePaginationScroll();
+    setPageSize(nextPageSize);
+    setPage(1);
+    setSelected([]);
+  }
   const updateSearch = (value: string) => {
     setSearch(value);
     setPage(1);
@@ -225,8 +261,9 @@ export function NodesPage() {
           description={`共匹配 ${total} 个节点，本页 ${nodes.length} 个，已选 ${selected.length} 个。`}
           action={<BatchActions selected={selected} groups={groupsQuery.data ?? []} onBatch={requestBatch} />}
         />
-        {nodesQuery.isLoading ? <LoadingState /> : (
+        {nodesQuery.isLoading && !nodePage ? <LoadingState /> : (
           <>
+            {nodesQuery.isFetching ? <div className="mb-3 rounded-2xl border border-blue-400/20 bg-blue-500/10 px-4 py-2 text-xs text-blue-100">正在加载当前筛选结果，分页状态保持不跳动。</div> : null}
             <DataTable columns={['选择', '节点', '来源', '状态', '协议', '延迟', '服务器', '操作']} empty={!nodes.length}>
             {nodes.map((node) => {
               const runtime = runtimeByNodeID.get(node.id);
@@ -278,8 +315,8 @@ export function NodesPage() {
               pageSize={pageSize}
               total={total}
               totalPages={totalPages}
-              onPageChange={(nextPage) => { setPage(nextPage); setSelected([]); }}
-              onPageSizeChange={(nextPageSize) => { setPageSize(nextPageSize); setPage(1); setSelected([]); }}
+              onPageChange={changePage}
+              onPageSizeChange={changePageSize}
             />
           </>
         )}

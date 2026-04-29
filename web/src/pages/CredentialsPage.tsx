@@ -33,11 +33,14 @@ type CreateForm = ScopeForm & {
 type CommandSet = {
   socks5h: string;
   http: string;
+  stickyGet?: string;
+  stickyPost?: string;
 };
 
 type CommandInput = {
   username: string;
   password: string;
+  selection_policy: SelectionPolicy;
 };
 
 const defaultCreateForm: CreateForm = {
@@ -88,7 +91,7 @@ export function CredentialsPage() {
   const invalidateCredentials = () => { void queryClient.invalidateQueries({ queryKey: ['credentials'] }); };
   const createMutation = useMutation({
     mutationFn: (input: CredentialInput) => createCredential(input),
-    onSuccess: (_credential, input) => { setCreatedCommands({ username: input.username, password: input.password }); setOpen(false); setForm(defaultCreateForm); invalidateCredentials(); },
+    onSuccess: (credential, input) => { setCreatedCommands({ username: input.username, password: input.password, selection_policy: credential.selection_policy }); setOpen(false); setForm(defaultCreateForm); invalidateCredentials(); },
   });
   const updateMutation = useMutation({ mutationFn: ({ id, enabled }: { id: number; enabled: boolean }) => updateCredential(id, { enabled }), onSuccess: invalidateCredentials });
   const editMutation = useMutation({
@@ -99,7 +102,7 @@ export function CredentialsPage() {
     mutationFn: ({ id, password }: { id: number; password: string }) => resetCredentialPassword(id, password),
     onSuccess: (_result, variables) => {
       const credential = (credentialsQuery.data ?? []).find((item) => item.id === variables.id);
-      if (credential) setCreatedCommands({ username: credential.username, password: variables.password });
+      if (credential) setCreatedCommands({ username: credential.username, password: variables.password, selection_policy: credential.selection_policy });
       setResetID(0);
       setNewPassword('');
       invalidateCredentials();
@@ -221,14 +224,14 @@ export function CredentialsPage() {
       <CommandModal
         open={Boolean(createdCommands)}
         title="凭证创建成功"
-        commands={createdCommands ? proxyCommands(createdCommands.username, createdCommands.password, proxyStatusQuery.data) : emptyCommandSet()}
+        commands={createdCommands ? proxyCommands(createdCommands.username, createdCommands.password, proxyStatusQuery.data, createdCommands.selection_policy) : emptyCommandSet()}
         description="这是唯一一次能直接展示明文密码的测试命令，关闭后前端不会保存密码。"
         onClose={() => setCreatedCommands(null)}
       />
       <CommandModal
         open={Boolean(commandCredential)}
         title="测试命令"
-        commands={commandCredential ? proxyCommands(commandCredential.username, '<填写密码>', proxyStatusQuery.data) : emptyCommandSet()}
+        commands={commandCredential ? proxyCommands(commandCredential.username, '<填写密码>', proxyStatusQuery.data, commandCredential.selection_policy) : emptyCommandSet()}
         description="已有凭证不会返回旧密码明文，请把命令里的 <填写密码> 替换成你自己保存的密码。"
         onClose={() => setCommandCredential(null)}
       />
@@ -242,8 +245,8 @@ function CredentialBindingSummary({ credential, groupNames, nodeNames }: { crede
   if (credential.bind_mode === 'all') {
     return (
       <div>
-        <Badge value="all">全部节点</Badge>
-        <div className="mt-2 text-xs leading-5 text-slate-400">全部可用节点随机，使用洗牌袋尽量一轮不重复。</div>
+        <Badge value={credential.selection_policy === 'sticky' ? 'sticky' : 'all'}>{credential.selection_policy === 'sticky' ? '全部节点粘性' : '全部节点'}</Badge>
+        <div className="mt-2 text-xs leading-5 text-slate-400">{credential.selection_policy === 'sticky' ? '首次从全部可用节点随机一个，调用切换 API 后才更换。' : '全部可用节点随机，使用洗牌袋尽量一轮不重复。'}</div>
       </div>
     );
   }
@@ -261,7 +264,7 @@ function CredentialBindingSummary({ credential, groupNames, nodeNames }: { crede
     .map((binding) => groupNames.get(binding.target_id) ?? `分组 ${binding.target_id}`);
   return (
     <div>
-      <Badge value="group">分组随机</Badge>
+      <Badge value={credential.selection_policy === 'sticky' ? 'sticky' : 'group'}>{credential.selection_policy === 'sticky' ? '分组粘性' : '分组随机'}</Badge>
       <div className="mt-2 flex max-w-sm flex-wrap gap-1.5">
         {names.length ? names.map((name) => <span key={name} className="rounded-full border border-blue-400/20 bg-blue-500/10 px-2 py-1 text-xs text-blue-100">{name}</span>) : <span className="text-xs text-slate-500">未绑定分组</span>}
       </div>
@@ -276,6 +279,16 @@ function CommandModal({ open, title, commands, description, onClose }: { open: b
         <p className="text-sm leading-6 text-slate-400">{description}</p>
         <CommandBlock title="SOCKS5H 测试" command={commands.socks5h} />
         <CommandBlock title="HTTP 测试" command={commands.http} />
+        {commands.stickyGet || commands.stickyPost ? (
+          <div className="rounded-2xl border border-emerald-400/20 bg-emerald-500/10 p-4">
+            <div className="mb-2 text-sm font-semibold text-emerald-100">粘性 IP 切换方式</div>
+            <p className="mb-4 text-xs leading-5 text-emerald-100/80">当前凭证是粘性 IP 模式。代理会保持当前出口；请求下面任一 API 成功后，会在该凭证绑定范围内切换到另一个可用节点。只有一个 IP 时请求也会成功，但不会换到其它节点。</p>
+            <div className="space-y-3">
+              <CommandBlock title="GET 切换 IP" command={commands.stickyGet ?? ''} />
+              <CommandBlock title="POST 切换 IP" command={commands.stickyPost ?? ''} />
+            </div>
+          </div>
+        ) : null}
       </div>
     </Modal>
   );
@@ -305,7 +318,11 @@ function ScopeFields<T extends ScopeForm>({ form, setForm, groups, nodes, bindin
     : form.bind_mode === 'node'
       ? nodes.map((node) => ({ id: node.id, label: node.name }))
       : [];
-  const setBindMode = (bindMode: BindMode) => setForm({ ...form, bind_mode: bindMode, selection_policy: policyForBindMode(bindMode), bindings: [] });
+  const setBindMode = (bindMode: BindMode) => setForm({ ...form, bind_mode: bindMode, selection_policy: policyForBindMode(bindMode, form.selection_policy), bindings: [] });
+  const setSelectionPolicy = (selectionPolicy: SelectionPolicy) => {
+    if (form.bind_mode === 'node') return;
+    setForm({ ...form, selection_policy: selectionPolicy === 'sticky' ? 'sticky' : 'random' });
+  };
   const setBinding = (value: string) => {
     const binding = bindingFromValue(value, form.bind_mode);
     if (!binding) return;
@@ -322,7 +339,14 @@ function ScopeFields<T extends ScopeForm>({ form, setForm, groups, nodes, bindin
         </Select>
       </Field>
       <Field label="选择策略">
-        <Input value={form.selection_policy === 'fixed' ? '固定：只使用一个指定节点' : '随机：从可用范围内随机选择'} readOnly />
+        {form.bind_mode === 'node' ? (
+          <Input value="固定：只使用一个指定节点" readOnly />
+        ) : (
+          <Select value={form.selection_policy === 'sticky' ? 'sticky' : 'random'} onChange={(event) => setSelectionPolicy(event.target.value as SelectionPolicy)}>
+            <option value="random">随机：每次从可用范围内选择</option>
+            <option value="sticky">粘性 IP：先随机一个，调用 API 后切换</option>
+          </Select>
+        )}
       </Field>
       {form.bind_mode !== 'all' ? (
         <Field label="绑定目标">
@@ -340,7 +364,7 @@ function ScopeFields<T extends ScopeForm>({ form, setForm, groups, nodes, bindin
 function ScopeHint({ error }: { error?: string }) {
   return (
     <div className={`mt-4 rounded-2xl border px-4 py-3 text-xs ${error ? 'border-red-400/30 bg-red-500/10 text-red-200' : 'border-blue-400/20 bg-blue-500/10 text-blue-200'}`}>
-      {error ?? '规则：全部节点和分组只能随机；固定策略只用于指定一个节点。'}
+      {error ?? '规则：全部节点和分组支持随机或粘性 IP；固定策略只用于指定一个节点。'}
     </div>
   );
 }
@@ -358,8 +382,9 @@ function BindingChips({ bindings, onRemove, bindingLabel }: { bindings: Credenti
   );
 }
 
-function policyForBindMode(bindMode: BindMode): SelectionPolicy {
-  return bindMode === 'node' ? 'fixed' : 'random';
+function policyForBindMode(bindMode: BindMode, currentPolicy: SelectionPolicy = 'random'): SelectionPolicy {
+  if (bindMode === 'node') return 'fixed';
+  return currentPolicy === 'sticky' ? 'sticky' : 'random';
 }
 
 function normalizeScope<T extends ScopeForm>(form: T): T {
@@ -369,7 +394,7 @@ function normalizeScope<T extends ScopeForm>(form: T): T {
     : bindMode === 'node'
       ? form.bindings.filter((binding) => binding.target_type === 'node').slice(0, 1)
       : uniqueBindings(form.bindings.filter((binding) => binding.target_type === 'group'));
-  return { ...form, selection_policy: policyForBindMode(bindMode), bindings };
+  return { ...form, selection_policy: policyForBindMode(bindMode, form.selection_policy), bindings };
 }
 
 function scopeError(form: ScopeForm) {
@@ -404,15 +429,22 @@ function uniqueBindings(bindings: CredentialBinding[]) {
   });
 }
 
-function proxyCommands(username: string, password: string, proxyStatus?: SystemProxyStatus): CommandSet {
+function proxyCommands(username: string, password: string, proxyStatus?: SystemProxyStatus, selectionPolicy: SelectionPolicy = 'random'): CommandSet {
   const safeUsername = encodeURIComponent(username);
   const safePassword = password.startsWith('<') ? password : encodeURIComponent(password);
   const socksAddress = commandAddress(proxyStatus?.socks_addr, '127.0.0.1:1080');
   const httpAddress = commandAddress(proxyStatus?.http_addr, '127.0.0.1:1081');
-  return {
+  const commands: CommandSet = {
     socks5h: `curl --proxy socks5h://${safeUsername}:${safePassword}@${socksAddress} https://httpbin.org/ip`,
     http: `curl -x http://${safeUsername}:${safePassword}@${httpAddress} https://httpbin.org/ip`,
   };
+  if (selectionPolicy === 'sticky') {
+    const apiAddress = commandAddress(proxyStatus?.api_addr, '127.0.0.1:8080');
+    const stickyURL = `http://${apiAddress}/api/v1/credentials/sticky/switch`;
+    commands.stickyGet = `curl "${stickyURL}?username=${safeUsername}&password=${safePassword}"`;
+    commands.stickyPost = `curl -X POST ${stickyURL} -H 'Content-Type: application/json' -d ${shellSingleQuote(JSON.stringify({ username, password }))}`;
+  }
+  return commands;
 }
 
 function commandAddress(configAddress: string | undefined, fallbackAddress: string) {
@@ -454,10 +486,14 @@ function emptyCommandSet(): CommandSet {
 }
 
 function commandText(commands: CommandSet) {
-  return [commands.socks5h, commands.http].filter(Boolean).join('\n');
+  return [commands.socks5h, commands.http, commands.stickyGet, commands.stickyPost].filter(Boolean).join('\n');
 }
 
 function copyCommand(command: string) {
   if (!command || !navigator.clipboard) return;
   void navigator.clipboard.writeText(command);
+}
+
+function shellSingleQuote(value: string) {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
 }

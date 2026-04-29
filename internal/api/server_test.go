@@ -216,6 +216,57 @@ func TestAdminTokenProtectsAPI(t *testing.T) {
 	}
 }
 
+func TestStickySwitchEndpointUsesCredentialAuthAndBypassesAdminToken(t *testing.T) {
+	ctx := context.Background()
+	store, err := db.Open(ctx, filepath.Join(t.TempDir(), "sticky.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer store.Close()
+	if err := db.Migrate(ctx, store); err != nil {
+		t.Fatalf("migrate db: %v", err)
+	}
+
+	handler := newTestServer(t, store)
+	handler.AdminToken = "secret"
+
+	subRepo := repository.NewSubscriptionRepository(store)
+	subscription, err := subRepo.Create(ctx, repository.CreateSubscriptionParams{Name: "sub", URL: "https://example.com/sub", Enabled: true})
+	if err != nil {
+		t.Fatalf("create subscription: %v", err)
+	}
+	if err := subRepo.UpsertNodes(ctx, []repository.UpsertProxyNodeParams{
+		{SubscriptionID: subscription.ID, SubscriptionNodeKey: "node-1", Name: "node 1", Protocol: "http", Server: "one.example.com", Port: 8080, RawConfigJSON: "{}", AdapterStatus: "supported"},
+		{SubscriptionID: subscription.ID, SubscriptionNodeKey: "node-2", Name: "node 2", Protocol: "http", Server: "two.example.com", Port: 8080, RawConfigJSON: "{}", AdapterStatus: "supported"},
+	}); err != nil {
+		t.Fatalf("upsert nodes: %v", err)
+	}
+	if _, err := handler.AuthService.CreateCredential(ctx, auth.CreateCredentialInput{
+		Username:        "sticky",
+		Password:        "pass",
+		Enabled:         true,
+		BindMode:        "all",
+		SelectionPolicy: "sticky",
+	}); err != nil {
+		t.Fatalf("create sticky credential: %v", err)
+	}
+	handler.reloadCache(ctx)
+
+	first := getJSON(t, handler, "/api/v1/credentials/sticky/switch?username=sticky&password=pass").(map[string]any)
+	if first["username"] != "sticky" || first["node_id"].(float64) == 0 {
+		t.Fatalf("unexpected first sticky switch response: %#v", first)
+	}
+	second := postJSON(t, handler, "/api/v1/credentials/sticky/switch", map[string]any{"username": "sticky", "password": "pass"})
+	if second["username"] != "sticky" || second["node_id"].(float64) == 0 {
+		t.Fatalf("unexpected second sticky switch response: %#v", second)
+	}
+	if first["node_id"].(float64) == second["node_id"].(float64) {
+		t.Fatalf("expected second sticky switch to choose another node: first=%#v second=%#v", first, second)
+	}
+
+	request(t, handler, http.MethodGet, "/api/v1/credentials/sticky/switch?username=sticky&password=bad", nil, http.StatusUnauthorized)
+}
+
 func newTestServer(t *testing.T, store *sql.DB) *Server {
 	t.Helper()
 	runtimeCache := cache.NewStore()

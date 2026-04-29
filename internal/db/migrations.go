@@ -106,7 +106,7 @@ CREATE TABLE IF NOT EXISTS credentials (
 	password_hash TEXT NOT NULL,
 	enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
 	bind_mode TEXT NOT NULL DEFAULT 'all' CHECK (bind_mode IN ('all', 'group', 'node')),
-	selection_policy TEXT NOT NULL DEFAULT 'random' CHECK (selection_policy IN ('random', 'fixed')),
+	selection_policy TEXT NOT NULL DEFAULT 'random' CHECK (selection_policy IN ('random', 'fixed', 'sticky')),
 	remark TEXT NOT NULL DEFAULT '',
 	created_at TEXT NOT NULL DEFAULT (datetime('now')),
 	updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -120,6 +120,13 @@ CREATE TABLE IF NOT EXISTS credential_bindings (
 	created_at TEXT NOT NULL DEFAULT (datetime('now')),
 	FOREIGN KEY (credential_id) REFERENCES credentials(id) ON DELETE CASCADE,
 	UNIQUE (credential_id, target_type, target_id)
+);
+
+CREATE TABLE IF NOT EXISTS credential_sticky_states (
+	credential_id INTEGER PRIMARY KEY,
+	node_id INTEGER NOT NULL DEFAULT 0,
+	updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+	FOREIGN KEY (credential_id) REFERENCES credentials(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS traffic_stats_hourly (
@@ -271,6 +278,57 @@ CREATE INDEX IF NOT EXISTS idx_proxy_request_logs_created ON proxy_request_logs(
 CREATE INDEX IF NOT EXISTS idx_proxy_request_logs_status_created ON proxy_request_logs(status, created_at);
 CREATE INDEX IF NOT EXISTS idx_proxy_request_logs_protocol_created ON proxy_request_logs(entry_protocol, created_at);
 CREATE INDEX IF NOT EXISTS idx_proxy_request_logs_credential_created ON proxy_request_logs(credential_id, created_at);
+`,
+	},
+	{
+		version: 6,
+		name:    "credential_sticky_policy",
+		sql: `
+CREATE TABLE credentials_new (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	username TEXT NOT NULL UNIQUE,
+	password_hash TEXT NOT NULL,
+	enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+	bind_mode TEXT NOT NULL DEFAULT 'all' CHECK (bind_mode IN ('all', 'group', 'node')),
+	selection_policy TEXT NOT NULL DEFAULT 'random' CHECK (selection_policy IN ('random', 'fixed', 'sticky')),
+	remark TEXT NOT NULL DEFAULT '',
+	created_at TEXT NOT NULL DEFAULT (datetime('now')),
+	updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE credential_bindings_new (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	credential_id INTEGER NOT NULL,
+	target_type TEXT NOT NULL CHECK (target_type IN ('group', 'node')),
+	target_id INTEGER NOT NULL,
+	created_at TEXT NOT NULL DEFAULT (datetime('now')),
+	FOREIGN KEY (credential_id) REFERENCES credentials_new(id) ON DELETE CASCADE,
+	UNIQUE (credential_id, target_type, target_id)
+);
+
+INSERT INTO credentials_new
+	(id, username, password_hash, enabled, bind_mode, selection_policy, remark, created_at, updated_at)
+SELECT id, username, password_hash, enabled, bind_mode, selection_policy, remark, created_at, updated_at
+FROM credentials;
+
+INSERT INTO credential_bindings_new
+	(id, credential_id, target_type, target_id, created_at)
+SELECT id, credential_id, target_type, target_id, created_at
+FROM credential_bindings;
+
+DROP TABLE credential_bindings;
+DROP TABLE credentials;
+ALTER TABLE credentials_new RENAME TO credentials;
+ALTER TABLE credential_bindings_new RENAME TO credential_bindings;
+
+CREATE TABLE IF NOT EXISTS credential_sticky_states (
+	credential_id INTEGER PRIMARY KEY,
+	node_id INTEGER NOT NULL DEFAULT 0,
+	updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+	FOREIGN KEY (credential_id) REFERENCES credentials(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_credentials_enabled ON credentials(enabled);
 `,
 	},
 }

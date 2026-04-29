@@ -2,7 +2,7 @@ export type SubscriptionStatus = 'success' | 'failed' | 'never';
 export type AdapterStatus = 'supported' | 'unsupported' | 'error';
 export type AliveStatus = 'unknown' | 'alive' | 'dead';
 export type BindMode = 'all' | 'group' | 'node';
-export type SelectionPolicy = 'random' | 'fixed';
+export type SelectionPolicy = 'random' | 'fixed' | 'sticky';
 
 export interface SystemHealth {
   status: string;

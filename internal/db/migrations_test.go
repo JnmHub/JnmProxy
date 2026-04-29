@@ -31,6 +31,7 @@ func TestMigrateCreatesCoreTables(t *testing.T) {
 		"group_keywords",
 		"credentials",
 		"credential_bindings",
+		"credential_sticky_states",
 		"traffic_stats_hourly",
 		"traffic_stats_daily",
 		"node_health_checks",
@@ -64,6 +65,12 @@ func TestMigrateCreatesCoreTables(t *testing.T) {
 		if !columnExists(t, store, "subscription_refresh_logs", column) {
 			t.Fatalf("expected subscription_refresh_logs.%s to exist", column)
 		}
+	}
+	if _, err := store.ExecContext(ctx, `
+INSERT INTO credentials (username, password_hash, enabled, bind_mode, selection_policy, remark)
+VALUES ('sticky-user', 'hash', 1, 'all', 'sticky', '')
+`); err != nil {
+		t.Fatalf("expected credentials table to accept sticky policy: %v", err)
 	}
 }
 
@@ -119,6 +126,15 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 	}
 	if !tableExists(t, store, "proxy_request_logs") {
 		t.Fatal("expected legacy schema to be upgraded with proxy_request_logs")
+	}
+	if !tableExists(t, store, "credential_sticky_states") {
+		t.Fatal("expected legacy schema to be upgraded with credential_sticky_states")
+	}
+	if _, err := store.ExecContext(ctx, `
+INSERT INTO credentials (username, password_hash, enabled, bind_mode, selection_policy, remark)
+VALUES ('sticky-user', 'hash', 1, 'all', 'sticky', '')
+`); err != nil {
+		t.Fatalf("expected upgraded credentials table to accept sticky policy: %v", err)
 	}
 }
 
