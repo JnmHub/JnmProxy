@@ -84,6 +84,63 @@ func TestHTTPProxyGETThroughHTTPOutbound(t *testing.T) {
 	}
 }
 
+func TestHTTPProxyFallsBackToDirectWhenNoCandidateNodes(t *testing.T) {
+	ctx := context.Background()
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("direct-ok:" + r.URL.Path))
+	}))
+	defer target.Close()
+
+	runtimeCache := testRuntimeCacheWithoutNodes(t, ctx)
+	statsCollector := stats.NewCollector(func() time.Time {
+		return time.Date(2026, 4, 29, 12, 0, 0, 0, time.UTC)
+	})
+	handler := NewHTTPProxy(runtimeCache, outbound.NewDialer(2*time.Second))
+	handler.Stats = statsCollector
+	proxyServer := httptest.NewServer(handler)
+	defer proxyServer.Close()
+
+	proxyURL, err := url.Parse(proxyServer.URL)
+	if err != nil {
+		t.Fatalf("parse proxy url: %v", err)
+	}
+	client := &http.Client{
+		Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL)},
+		Timeout:   5 * time.Second,
+	}
+	req, err := http.NewRequest(http.MethodGet, target.URL+"/direct", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Proxy-Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("user:pass")))
+
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("proxy direct request: %v", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK || string(body) != "direct-ok:/direct" {
+		t.Fatalf("unexpected direct response status=%d body=%q", resp.StatusCode, string(body))
+	}
+
+	hourly, _ := statsCollector.Snapshot()
+	if len(hourly) != 1 {
+		t.Fatalf("expected one direct stats key, got %d", len(hourly))
+	}
+	for key, counter := range hourly {
+		if key.NodeID != 0 || key.SubscriptionID != 0 {
+			t.Fatalf("expected direct stats to use zero node/subscription ids, got key %#v", key)
+		}
+		if counter.SuccessConnections != 1 {
+			t.Fatalf("expected one direct success, got %#v", counter)
+		}
+	}
+}
+
 func TestHTTPProxyRetriesAnotherNodeWhenFirstDialFails(t *testing.T) {
 	ctx := context.Background()
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -405,6 +462,53 @@ func TestSOCKS5ProxyThroughHTTPOutbound(t *testing.T) {
 	}
 }
 
+func TestSOCKS5ProxyFallsBackToDirectWhenNoCandidateNodes(t *testing.T) {
+	ctx := context.Background()
+	echoListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen echo: %v", err)
+	}
+	defer echoListener.Close()
+	go func() {
+		conn, err := echoListener.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		_, _ = io.Copy(conn, conn)
+	}()
+
+	runtimeCache := testRuntimeCacheWithoutNodes(t, ctx)
+	socksListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen socks: %v", err)
+	}
+	defer socksListener.Close()
+	go func() {
+		_ = NewSOCKS5Server(runtimeCache, outbound.NewDialer(2*time.Second)).Serve(socksListener)
+	}()
+
+	conn, err := net.Dial("tcp", socksListener.Addr().String())
+	if err != nil {
+		t.Fatalf("dial socks: %v", err)
+	}
+	defer conn.Close()
+	if err := socks5Connect(conn, "user", "pass", echoListener.Addr().String()); err != nil {
+		t.Fatalf("socks direct connect: %v", err)
+	}
+
+	if _, err := conn.Write([]byte("direct-ping")); err != nil {
+		t.Fatalf("write direct ping: %v", err)
+	}
+	reply := make([]byte, len("direct-ping"))
+	if _, err := io.ReadFull(conn, reply); err != nil {
+		t.Fatalf("read direct ping: %v", err)
+	}
+	if string(reply) != "direct-ping" {
+		t.Fatalf("unexpected direct echo reply: %q", string(reply))
+	}
+}
+
 func newHTTPConnectProxy(t *testing.T) *httptest.Server {
 	t.Helper()
 
@@ -453,6 +557,34 @@ func testRuntimeCacheWithDB(t *testing.T, ctx context.Context, upstreamURL strin
 func testRuntimeCacheWithHTTPUpstreams(t *testing.T, ctx context.Context, upstreamURLs []string) *cache.Store {
 	t.Helper()
 	runtimeCache, _ := testRuntimeCacheWithHTTPUpstreamsAndDB(t, ctx, upstreamURLs, true)
+	return runtimeCache
+}
+
+func testRuntimeCacheWithoutNodes(t *testing.T, ctx context.Context) *cache.Store {
+	t.Helper()
+
+	storeDB, err := db.Open(ctx, filepath.Join(t.TempDir(), "jnmproxy.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { _ = storeDB.Close() })
+	if err := db.Migrate(ctx, storeDB); err != nil {
+		t.Fatalf("migrate db: %v", err)
+	}
+	authService := auth.NewService(repository.NewCredentialRepository(storeDB))
+	if _, err := authService.CreateCredential(ctx, auth.CreateCredentialInput{
+		Username:        "user",
+		Password:        "pass",
+		Enabled:         true,
+		BindMode:        "all",
+		SelectionPolicy: "random",
+	}); err != nil {
+		t.Fatalf("create credential: %v", err)
+	}
+	runtimeCache := cache.NewStore()
+	if err := runtimeCache.Load(ctx, storeDB); err != nil {
+		t.Fatalf("load cache: %v", err)
+	}
 	return runtimeCache
 }
 

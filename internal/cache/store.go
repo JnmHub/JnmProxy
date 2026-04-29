@@ -64,6 +64,7 @@ type Selection struct {
 	Credential CredentialSnapshot
 	Node       NodeSnapshot
 	GroupID    int64
+	Direct     bool
 }
 
 type RuntimeOptions struct {

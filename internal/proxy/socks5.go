@@ -68,7 +68,7 @@ func (server *SOCKS5Server) handleConn(conn net.Conn) {
 	defer cancel()
 	selection, outConn, attempts, err := server.dialWithRetries(ctx, username, targetAddress)
 	if err != nil {
-		server.recordRequestLog(username, credential.ID, targetAddress, "failed", cache.Selection{}, attempts, err, startedAt)
+		server.recordRequestLog(username, credential.ID, targetAddress, "failed", selection, attempts, err, startedAt)
 		_ = writeSOCKS5Reply(conn, 0x05)
 		return
 	}
@@ -76,13 +76,13 @@ func (server *SOCKS5Server) handleConn(conn net.Conn) {
 
 	_ = conn.SetDeadline(time.Time{})
 	if err := writeSOCKS5Reply(conn, 0x00); err != nil {
-		server.Cache.ReportNodeFailure(selection.Node.ID, err.Error())
+		reportSelectionFailure(server.Cache, selection, err.Error())
 		recordStats(server.Stats, selection, 0, 0, false)
 		server.recordRequestLog(username, credential.ID, targetAddress, "failed", selection, markLastAttemptFailed(attempts, selection.Node.ID, err), err, startedAt)
 		return
 	}
 	uploadBytes, downloadBytes := pipeConnections(conn, outConn)
-	server.Cache.ReportNodeSuccess(selection.Node.ID)
+	reportSelectionSuccess(server.Cache, selection)
 	recordStats(server.Stats, selection, uploadBytes, downloadBytes, true)
 }
 
@@ -93,6 +93,9 @@ func (server *SOCKS5Server) dialWithRetries(ctx context.Context, username string
 	for attempt := 0; attempt < normalizeMaxAttempts(server.MaxAttemptsPerRequest); attempt++ {
 		selection, err := server.Cache.SelectExcluding(username, excluded)
 		if err != nil {
+			if shouldFallbackDirect(err) && len(attempts) == 0 {
+				return server.dialDirect(ctx, username, targetAddress, attempts)
+			}
 			lastErr = err
 			break
 		}
@@ -104,13 +107,28 @@ func (server *SOCKS5Server) dialWithRetries(ctx context.Context, username string
 		}
 		lastErr = err
 		attempts = append(attempts, RequestAttempt{NodeID: selection.Node.ID, NodeName: selection.Node.Name, Success: false, Error: err.Error()})
-		server.Cache.ReportNodeFailure(selection.Node.ID, err.Error())
+		reportSelectionFailure(server.Cache, selection, err.Error())
 		recordStats(server.Stats, selection, 0, 0, false)
 	}
 	if lastErr == nil {
 		lastErr = cache.ErrNoCandidateNodes
 	}
 	return cache.Selection{}, nil, attempts, lastErr
+}
+
+func (server *SOCKS5Server) dialDirect(ctx context.Context, username string, targetAddress string, attempts []RequestAttempt) (cache.Selection, net.Conn, []RequestAttempt, error) {
+	selection, err := directSelection(server.Cache, username)
+	if err != nil {
+		return cache.Selection{}, nil, attempts, err
+	}
+	outConn, err := server.Dialer.DialDirectContext(ctx, targetAddress)
+	if err != nil {
+		attempts = append(attempts, directAttempt(false, err))
+		recordStats(server.Stats, selection, 0, 0, false)
+		return selection, nil, attempts, err
+	}
+	attempts = append(attempts, directAttempt(true, nil))
+	return selection, outConn, attempts, nil
 }
 
 func (server *SOCKS5Server) recordRequestLog(username string, credentialID int64, targetAddress string, status string, selection cache.Selection, attempts []RequestAttempt, err error, startedAt time.Time) {
@@ -126,7 +144,9 @@ func (server *SOCKS5Server) recordRequestLog(username string, credentialID int64
 		Attempts:      attempts,
 		Duration:      time.Since(startedAt),
 	}
-	if selection.Node.ID != 0 {
+	if selection.Direct {
+		event.SelectedNodeName = directNodeName
+	} else if selection.Node.ID != 0 {
 		event.SelectedNodeID = selection.Node.ID
 		event.SelectedNodeName = selection.Node.Name
 	}

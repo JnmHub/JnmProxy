@@ -51,7 +51,7 @@ func (proxy *HTTPProxy) handleConnect(w http.ResponseWriter, r *http.Request, us
 	targetAddress := ensurePort(r.Host, "443")
 	selection, outConn, attempts, err := proxy.dialWithRetries(r.Context(), username, targetAddress)
 	if err != nil {
-		proxy.recordRequestLog("HTTP", username, credentialID, targetAddress, "failed", cache.Selection{}, attempts, err, startedAt)
+		proxy.recordRequestLog("HTTP", username, credentialID, targetAddress, "failed", selection, attempts, err, startedAt)
 		http.Error(w, "connect upstream failed", http.StatusBadGateway)
 		return
 	}
@@ -59,7 +59,7 @@ func (proxy *HTTPProxy) handleConnect(w http.ResponseWriter, r *http.Request, us
 	hijacker, ok := w.(http.Hijacker)
 	if !ok {
 		_ = outConn.Close()
-		proxy.Cache.ReportNodeFailure(selection.Node.ID, "http hijacking not supported")
+		reportSelectionFailure(proxy.Cache, selection, "http hijacking not supported")
 		recordStats(proxy.Stats, selection, 0, 0, false)
 		proxy.recordRequestLog("HTTP", username, credentialID, targetAddress, "failed", selection, markLastAttemptFailed(attempts, selection.Node.ID, errors.New("http hijacking not supported")), errors.New("http hijacking not supported"), startedAt)
 		http.Error(w, "hijacking not supported", http.StatusInternalServerError)
@@ -68,7 +68,7 @@ func (proxy *HTTPProxy) handleConnect(w http.ResponseWriter, r *http.Request, us
 	clientConn, _, err := hijacker.Hijack()
 	if err != nil {
 		_ = outConn.Close()
-		proxy.Cache.ReportNodeFailure(selection.Node.ID, err.Error())
+		reportSelectionFailure(proxy.Cache, selection, err.Error())
 		recordStats(proxy.Stats, selection, 0, 0, false)
 		proxy.recordRequestLog("HTTP", username, credentialID, targetAddress, "failed", selection, markLastAttemptFailed(attempts, selection.Node.ID, err), err, startedAt)
 		return
@@ -76,13 +76,13 @@ func (proxy *HTTPProxy) handleConnect(w http.ResponseWriter, r *http.Request, us
 	if _, err := io.WriteString(clientConn, "HTTP/1.1 200 Connection Established\r\n\r\n"); err != nil {
 		_ = clientConn.Close()
 		_ = outConn.Close()
-		proxy.Cache.ReportNodeFailure(selection.Node.ID, err.Error())
+		reportSelectionFailure(proxy.Cache, selection, err.Error())
 		recordStats(proxy.Stats, selection, 0, 0, false)
 		proxy.recordRequestLog("HTTP", username, credentialID, targetAddress, "failed", selection, markLastAttemptFailed(attempts, selection.Node.ID, err), err, startedAt)
 		return
 	}
 	uploadBytes, downloadBytes := pipeConnections(clientConn, outConn)
-	proxy.Cache.ReportNodeSuccess(selection.Node.ID)
+	reportSelectionSuccess(proxy.Cache, selection)
 	recordStats(proxy.Stats, selection, uploadBytes, downloadBytes, true)
 }
 
@@ -90,7 +90,7 @@ func (proxy *HTTPProxy) handleHTTP(w http.ResponseWriter, r *http.Request, usern
 	targetAddress := httpTargetAddress(r)
 	selection, outConn, attempts, err := proxy.dialWithRetries(r.Context(), username, targetAddress)
 	if err != nil {
-		proxy.recordRequestLog("HTTP", username, credentialID, targetAddress, "failed", cache.Selection{}, attempts, err, startedAt)
+		proxy.recordRequestLog("HTTP", username, credentialID, targetAddress, "failed", selection, attempts, err, startedAt)
 		http.Error(w, "connect upstream failed", http.StatusBadGateway)
 		return
 	}
@@ -105,7 +105,7 @@ func (proxy *HTTPProxy) handleHTTP(w http.ResponseWriter, r *http.Request, usern
 	outReq.Header.Del("Proxy-Connection")
 
 	if err := outReq.Write(outConn); err != nil {
-		proxy.Cache.ReportNodeFailure(selection.Node.ID, err.Error())
+		reportSelectionFailure(proxy.Cache, selection, err.Error())
 		recordStats(proxy.Stats, selection, requestUploadBytes(r), 0, false)
 		proxy.recordRequestLog("HTTP", username, credentialID, targetAddress, "failed", selection, markLastAttemptFailed(attempts, selection.Node.ID, err), err, startedAt)
 		http.Error(w, "write upstream request failed", http.StatusBadGateway)
@@ -114,7 +114,7 @@ func (proxy *HTTPProxy) handleHTTP(w http.ResponseWriter, r *http.Request, usern
 
 	resp, err := http.ReadResponse(bufio.NewReader(outConn), outReq)
 	if err != nil {
-		proxy.Cache.ReportNodeFailure(selection.Node.ID, err.Error())
+		reportSelectionFailure(proxy.Cache, selection, err.Error())
 		recordStats(proxy.Stats, selection, requestUploadBytes(r), 0, false)
 		proxy.recordRequestLog("HTTP", username, credentialID, targetAddress, "failed", selection, markLastAttemptFailed(attempts, selection.Node.ID, err), err, startedAt)
 		http.Error(w, "read upstream response failed", http.StatusBadGateway)
@@ -125,7 +125,7 @@ func (proxy *HTTPProxy) handleHTTP(w http.ResponseWriter, r *http.Request, usern
 	copyHeader(w.Header(), resp.Header)
 	w.WriteHeader(resp.StatusCode)
 	downloadBytes, _ := io.Copy(w, resp.Body)
-	proxy.Cache.ReportNodeSuccess(selection.Node.ID)
+	reportSelectionSuccess(proxy.Cache, selection)
 	recordStats(proxy.Stats, selection, requestUploadBytes(r), downloadBytes, resp.StatusCode < 500)
 }
 
@@ -136,6 +136,9 @@ func (proxy *HTTPProxy) dialWithRetries(ctx context.Context, username string, ta
 	for attempt := 0; attempt < normalizeMaxAttempts(proxy.MaxAttemptsPerRequest); attempt++ {
 		selection, err := proxy.Cache.SelectExcluding(username, excluded)
 		if err != nil {
+			if shouldFallbackDirect(err) && len(attempts) == 0 {
+				return proxy.dialDirect(ctx, username, targetAddress, attempts)
+			}
 			lastErr = err
 			break
 		}
@@ -147,13 +150,28 @@ func (proxy *HTTPProxy) dialWithRetries(ctx context.Context, username string, ta
 		}
 		lastErr = err
 		attempts = append(attempts, RequestAttempt{NodeID: selection.Node.ID, NodeName: selection.Node.Name, Success: false, Error: err.Error()})
-		proxy.Cache.ReportNodeFailure(selection.Node.ID, err.Error())
+		reportSelectionFailure(proxy.Cache, selection, err.Error())
 		recordStats(proxy.Stats, selection, 0, 0, false)
 	}
 	if lastErr == nil {
 		lastErr = cache.ErrNoCandidateNodes
 	}
 	return cache.Selection{}, nil, attempts, lastErr
+}
+
+func (proxy *HTTPProxy) dialDirect(ctx context.Context, username string, targetAddress string, attempts []RequestAttempt) (cache.Selection, net.Conn, []RequestAttempt, error) {
+	selection, err := directSelection(proxy.Cache, username)
+	if err != nil {
+		return cache.Selection{}, nil, attempts, err
+	}
+	outConn, err := proxy.Dialer.DialDirectContext(ctx, targetAddress)
+	if err != nil {
+		attempts = append(attempts, directAttempt(false, err))
+		recordStats(proxy.Stats, selection, 0, 0, false)
+		return selection, nil, attempts, err
+	}
+	attempts = append(attempts, directAttempt(true, nil))
+	return selection, outConn, attempts, nil
 }
 
 func (proxy *HTTPProxy) recordRequestLog(entryProtocol string, username string, credentialID int64, targetAddress string, status string, selection cache.Selection, attempts []RequestAttempt, err error, startedAt time.Time) {
@@ -169,7 +187,9 @@ func (proxy *HTTPProxy) recordRequestLog(entryProtocol string, username string, 
 		Attempts:      attempts,
 		Duration:      time.Since(startedAt),
 	}
-	if selection.Node.ID != 0 {
+	if selection.Direct {
+		event.SelectedNodeName = directNodeName
+	} else if selection.Node.ID != 0 {
 		event.SelectedNodeID = selection.Node.ID
 		event.SelectedNodeName = selection.Node.Name
 	}

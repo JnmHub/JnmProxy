@@ -39,6 +39,8 @@ func NewDialer(timeout time.Duration) *Dialer {
 
 func (dialer *Dialer) DialContext(ctx context.Context, node cache.NodeSnapshot, targetAddress string) (net.Conn, error) {
 	switch strings.ToLower(node.Protocol) {
+	case "direct":
+		return dialer.DialDirectContext(ctx, targetAddress)
 	case "http", "https":
 		return dialer.dialHTTPProxy(ctx, node, targetAddress)
 	case "socks5", "socks":
@@ -49,6 +51,16 @@ func (dialer *Dialer) DialContext(ctx context.Context, node cache.NodeSnapshot, 
 		}
 		return nil, fmt.Errorf("unsupported outbound protocol %q", node.Protocol)
 	}
+}
+
+func (dialer *Dialer) DialDirectContext(ctx context.Context, targetAddress string) (net.Conn, error) {
+	ctx, cancel := context.WithTimeout(ctx, dialer.Timeout)
+	defer cancel()
+	conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", targetAddress)
+	if err != nil {
+		return nil, fmt.Errorf("dial direct %s: %w", targetAddress, err)
+	}
+	return conn, nil
 }
 
 func (dialer *Dialer) dialHTTPProxy(ctx context.Context, node cache.NodeSnapshot, targetAddress string) (net.Conn, error) {
